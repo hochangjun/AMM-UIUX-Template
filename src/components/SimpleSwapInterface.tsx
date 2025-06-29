@@ -132,10 +132,19 @@ export function SimpleSwapInterface() {
       }
       
       const quoteData = await response.json();
+      console.log('🔍 Pathfinder API Response:', quoteData);
       
-      if (quoteData.output) {
-        // Pathfinder returns decimal amount directly in 'output' field
-        const outputAmount = parseFloat(quoteData.output);
+      if (quoteData.output_formatted || quoteData.output) {
+        // Use formatted output if available, otherwise parse raw output
+        const outputAmount = quoteData.output_formatted 
+          ? parseFloat(quoteData.output_formatted)
+          : parseFloat(quoteData.output);
+        
+        console.log('📊 Output Amount:', { 
+          raw: quoteData.output, 
+          formatted: quoteData.output_formatted, 
+          parsed: outputAmount 
+        });
         
         if (isFromAmount) {
           // Set toAmount based on toMode
@@ -637,7 +646,7 @@ export function SimpleSwapInterface() {
               />
               <button
                 onClick={() => setFromMode(fromMode === 'token' ? 'usd' : 'token')}
-                className="absolute right-0 top-1/2 transform -translate-y-1/2 p-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                className="absolute right-0 bottom-0 p-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
                 title={`Switch to ${fromMode === 'token' ? 'USD' : 'TOKEN'} mode`}
               >
                 <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -766,7 +775,7 @@ export function SimpleSwapInterface() {
               />
               <button
                 onClick={() => setToMode(toMode === 'token' ? 'usd' : 'token')}
-                className="absolute right-0 top-1/2 transform -translate-y-1/2 p-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                className="absolute right-0 bottom-0 p-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
                 title={`Switch to ${toMode === 'token' ? 'USD' : 'TOKEN'} mode`}
               >
                 <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -102,7 +102,7 @@ export function SimpleSwapInterface() {
   const wallet = wallets[0];
 
   // Notification helper
-  const showNotification = (type: 'success' | 'error' | 'info', message: string | JSX.Element, duration = 5000) => {
+  const showNotification = (type: 'success' | 'error' | 'info', message: string | React.ReactNode, duration = 5000) => {
     setNotification({ type, message });
     // Commented out timer to debug - toast should stay forever now
     // setTimeout(() => setNotification(null), duration);

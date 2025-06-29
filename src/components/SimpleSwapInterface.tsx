@@ -94,6 +94,8 @@ export function SimpleSwapInterface() {
   const [loading, setLoading] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [notification, setNotification] = useState<{type: 'success' | 'error' | 'info', message: string} | null>(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
+  const [lastEditedField, setLastEditedField] = useState<'from' | 'to'>('from');
 
   const wallet = wallets[0];
 
@@ -101,6 +103,137 @@ export function SimpleSwapInterface() {
   const showNotification = (type: 'success' | 'error' | 'info', message: string, duration = 5000) => {
     setNotification({ type, message });
     setTimeout(() => setNotification(null), duration);
+  };
+
+  // Quote fetching function
+  const fetchQuote = async (fromToken: Token, toToken: Token, amount: string, isFromAmount: boolean = true) => {
+    if (!amount || parseFloat(amount) <= 0) return;
+    
+    try {
+      setQuoteLoading(true);
+      const fromAddress = fromToken.address;
+      const toAddress = toToken.address;
+      
+      // Convert amount to proper decimals
+      const rawAmount = isFromAmount 
+        ? (parseFloat(amount) * Math.pow(10, fromToken.decimals)).toString()
+        : (parseFloat(amount) * Math.pow(10, toToken.decimals)).toString();
+      
+      const response = await fetch(`/api/pathfinder?from=${fromAddress}&to=${toAddress}&amount=${rawAmount}&sender=${wallet?.address || ''}`);
+      
+      if (!response.ok) {
+        throw new Error(`Quote failed: ${response.status}`);
+      }
+      
+      const quoteData = await response.json();
+      
+      if (quoteData.quote && quoteData.quote.toAmount) {
+        const outputAmount = parseFloat(quoteData.quote.toAmount) / Math.pow(10, toToken.decimals);
+        
+        if (isFromAmount) {
+          setToAmount(outputAmount.toFixed(6));
+        } else {
+          setFromAmount(outputAmount.toFixed(6));
+        }
+      }
+    } catch (error) {
+      console.error('Quote fetch error:', error);
+      showNotification('error', 'Failed to fetch quote. Please try again.');
+    } finally {
+      setQuoteLoading(false);
+    }
+  };
+
+  // Debounced quote fetching
+  useEffect(() => {
+    if (!fromToken || !toToken || !fromAmount || lastEditedField !== 'from') return;
+    
+    const timeoutId = setTimeout(() => {
+      fetchQuote(fromToken, toToken, fromAmount, true);
+    }, 500);
+    
+    return () => clearTimeout(timeoutId);
+  }, [fromAmount, fromToken, toToken, lastEditedField]);
+
+  useEffect(() => {
+    if (!fromToken || !toToken || !toAmount || lastEditedField !== 'to') return;
+    
+    const timeoutId = setTimeout(() => {
+      fetchQuote(toToken, fromToken, toAmount, false);
+    }, 500);
+    
+    return () => clearTimeout(timeoutId);
+  }, [toAmount, fromToken, toToken, lastEditedField]);
+
+  // Swap execution function
+  const executeSwap = async () => {
+    if (!fromToken || !toToken || !fromAmount || !wallet?.address) {
+      showNotification('error', 'Missing required swap parameters');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      showNotification('info', 'Preparing swap transaction...');
+
+      // Get fresh quote for the swap
+      const fromAddress = fromToken.address;
+      const toAddress = toToken.address;
+      const rawAmount = (parseFloat(fromAmount) * Math.pow(10, fromToken.decimals)).toString();
+
+      const response = await fetch(`/api/pathfinder?from=${fromAddress}&to=${toAddress}&amount=${rawAmount}&sender=${wallet.address}`);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to get swap quote: ${response.status}`);
+      }
+      
+      const quoteData = await response.json();
+      
+      if (!quoteData.quote || !quoteData.quote.transactionRequest) {
+        throw new Error('Invalid swap quote received');
+      }
+
+      // Execute the transaction using wallet
+      const txRequest = quoteData.quote.transactionRequest;
+      
+      showNotification('info', 'Please confirm the transaction in your wallet...');
+      
+      const txResponse = await wallet.sendTransaction({
+        to: txRequest.to,
+        data: txRequest.data,
+        value: txRequest.value || '0',
+        gasLimit: txRequest.gasLimit
+      });
+
+      showNotification('info', 'Transaction submitted. Waiting for confirmation...');
+      
+      // Wait for transaction confirmation
+      const receipt = await txResponse.wait();
+      
+      if (receipt.status === 1) {
+        showNotification('success', `Swap completed! Transaction: ${txResponse.hash.slice(0, 10)}...`);
+        // Reset form
+        setFromAmount('');
+        setToAmount('');
+        // Refresh balances
+        if (wallet.address) {
+          const updatedTokens = await getWalletBalances(wallet.address);
+          setAvailableTokens(updatedTokens);
+        }
+      } else {
+        throw new Error('Transaction failed');
+      }
+      
+    } catch (error: any) {
+      console.error('Swap execution error:', error);
+      if (error.message.includes('user rejected')) {
+        showNotification('error', 'Transaction cancelled by user');
+      } else {
+        showNotification('error', `Swap failed: ${error.message}`);
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   // Hydration fix
@@ -330,7 +463,15 @@ export function SimpleSwapInterface() {
         {/* From Token */}
         <div className="mb-4">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-gray-600">You pay</span>
+            <div className="flex items-center space-x-2">
+              <span className="text-sm font-medium text-gray-600">You pay</span>
+              <button
+                onClick={() => setFromMode(fromMode === 'token' ? 'usd' : 'token')}
+                className="px-2 py-1 text-xs font-medium bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
+              >
+                {fromMode === 'token' ? 'USD' : 'TOKEN'}
+              </button>
+            </div>
             {fromToken && (
               <button
                 onClick={() => {
@@ -420,6 +561,7 @@ export function SimpleSwapInterface() {
                 onChange={(e) => {
                   const value = e.target.value.replace('$', '');
                   setFromAmount(value);
+                  setLastEditedField('from');
                 }}
                 placeholder={fromMode === 'usd' ? '$0' : '0'}
                 className="w-full text-right text-3xl font-semibold bg-transparent border-none outline-none placeholder-gray-400 text-gray-900"
@@ -458,7 +600,15 @@ export function SimpleSwapInterface() {
         {/* To Token */}
         <div className="mb-6">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-gray-600">You receive</span>
+            <div className="flex items-center space-x-2">
+              <span className="text-sm font-medium text-gray-600">You receive</span>
+              <button
+                onClick={() => setToMode(toMode === 'token' ? 'usd' : 'token')}
+                className="px-2 py-1 text-xs font-medium bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
+              >
+                {toMode === 'token' ? 'USD' : 'TOKEN'}
+              </button>
+            </div>
             {toToken && (
               <span className="text-sm text-gray-500">
                 Balance: {toToken.balance ? parseFloat(toToken.balance).toFixed(4) : '0.0000'} {toToken.symbol}
@@ -539,6 +689,7 @@ export function SimpleSwapInterface() {
                 onChange={(e) => {
                   const value = e.target.value.replace('$', '');
                   setToAmount(value);
+                  setLastEditedField('to');
                 }}
                 placeholder={toMode === 'usd' ? '$0' : '0'}
                 className="w-full text-right text-3xl font-semibold bg-transparent border-none outline-none placeholder-gray-400 text-gray-900"
@@ -558,11 +709,14 @@ export function SimpleSwapInterface() {
 
         {/* Swap Button */}
         <button
-          disabled={!fromToken || !toToken || !fromAmount || loading}
-          onClick={() => showNotification('info', 'Swap functionality coming soon!')}
+          disabled={!fromToken || !toToken || !fromAmount || loading || quoteLoading}
+          onClick={executeSwap}
           className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-semibold py-4 px-6 rounded-2xl transition-colors"
         >
-          {loading ? 'Processing...' : !fromToken || !toToken ? 'Select tokens' : !fromAmount ? 'Enter amount' : 'Swap'}
+          {loading ? 'Processing...' : 
+           quoteLoading ? 'Getting quote...' :
+           !fromToken || !toToken ? 'Select tokens' : 
+           !fromAmount ? 'Enter amount' : 'Swap'}
         </button>
 
         {/* Connected Wallet Info */}

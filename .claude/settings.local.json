@@ -14,7 +14,8 @@
       "Bash(npm install)",
       "Bash(timeout 10 npm run dev)",
       "Bash(npm run build:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(rg:*)"
     ],
     "deny": []
   }

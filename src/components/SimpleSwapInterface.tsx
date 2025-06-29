@@ -1,0 +1,578 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { usePrivy, useWallets } from '@privy-io/react-auth';
+
+// Simple token interface
+interface Token {
+  address: string;
+  symbol: string;
+  name: string;
+  decimals: number;
+  balance?: string;
+  usdPrice?: number;
+}
+
+// Simple API functions for Monorail using proxy
+async function getMonUsdPrice(): Promise<number> {
+  try {
+    const response = await fetch('/api/monorail?endpoint=/symbol/MONUSD');
+    if (!response.ok) return 1.0; // fallback
+    const data = await response.json();
+    const price = parseFloat(data.price) || 1.0;
+    return isNaN(price) ? 1.0 : price;
+  } catch (error) {
+    console.warn('Failed to fetch MON price:', error);
+    return 1.0; // fallback
+  }
+}
+
+async function getTokenPrice(address: string, monUsdPrice: number): Promise<number> {
+  if (address === '0x0000000000000000000000000000000000000000') {
+    return monUsdPrice; // MON price
+  }
+  
+  try {
+    const response = await fetch(`/api/monorail?endpoint=/token/${address}`);
+    if (!response.ok) return 0;
+    const data = await response.json();
+    return (data.mon_per_token || 0) * monUsdPrice;
+  } catch (error) {
+    console.warn(`Failed to fetch price for ${address}:`, error);
+    return 0;
+  }
+}
+
+async function getWalletBalances(walletAddress: string): Promise<Token[]> {
+  try {
+    const endpoint = `/wallet/${walletAddress}/balances`;
+    console.log('🔗 Fetching wallet balances for:', walletAddress);
+    
+    const response = await fetch(`/api/monorail?endpoint=${encodeURIComponent(endpoint)}`);
+    console.log('📡 API Response status:', response.status, response.statusText);
+    
+    if (!response.ok) {
+      console.warn(`❌ API returned error: ${response.status} ${response.statusText}`);
+      return [];
+    }
+    
+    const data = await response.json();
+    console.log('📋 Raw API response:', data);
+    
+    const tokens = Array.isArray(data) ? data : (data.results || []);
+    console.log('🪙 Tokens from response:', tokens.length);
+    
+    const mappedTokens = tokens.map((token: any) => ({
+      address: token.address,
+      symbol: token.symbol,
+      name: token.name,
+      decimals: parseInt(token.decimals),
+      balance: token.balance || '0'
+    }));
+    
+    console.log('🗂️ Mapped tokens:', mappedTokens);
+    return mappedTokens;
+  } catch (error) {
+    console.error('❌ Failed to fetch wallet balances:', error);
+    return [];
+  }
+}
+
+export function SimpleSwapInterface() {
+  const { ready, authenticated, login, logout } = usePrivy();
+  const { wallets } = useWallets();
+  
+  const [availableTokens, setAvailableTokens] = useState<Token[]>([]);
+  const [verifiedTokenAddresses, setVerifiedTokenAddresses] = useState<Set<string>>(new Set());
+  const [fromToken, setFromToken] = useState<Token | null>(null);
+  const [toToken, setToToken] = useState<Token | null>(null);
+  const [fromAmount, setFromAmount] = useState('');
+  const [toAmount, setToAmount] = useState('');
+  const [fromMode, setFromMode] = useState<'token' | 'usd'>('token');
+  const [toMode, setToMode] = useState<'token' | 'usd'>('token');
+  const [monUsdPrice, setMonUsdPrice] = useState<number>(1.0);
+  const [loading, setLoading] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const [notification, setNotification] = useState<{type: 'success' | 'error' | 'info', message: string} | null>(null);
+
+  const wallet = wallets[0];
+
+  // Notification helper
+  const showNotification = (type: 'success' | 'error' | 'info', message: string, duration = 5000) => {
+    setNotification({ type, message });
+    setTimeout(() => setNotification(null), duration);
+  };
+
+  // Hydration fix
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Load wallet tokens and prices
+  useEffect(() => {
+    const loadData = async () => {
+      setLoading(true);
+      try {
+        console.log('🔄 Loading data...', { ready, authenticated, walletAddress: wallet?.address });
+        
+        // Get MON USD price
+        const monPrice = await getMonUsdPrice();
+        const validMonPrice = typeof monPrice === 'number' && !isNaN(monPrice) ? monPrice : 1.0;
+        setMonUsdPrice(validMonPrice);
+        console.log('💰 MON USD Price:', validMonPrice);
+
+        // Get verified tokens from API
+        let verifiedTokens: Token[] = [];
+        try {
+          console.log('🔍 Fetching verified tokens from API...');
+          const verifiedResponse = await fetch('/api/monorail?endpoint=/tokens/category/verified');
+          if (verifiedResponse.ok) {
+            const verifiedData = await verifiedResponse.json();
+            console.log('📋 Verified tokens API response:', verifiedData);
+            
+            const tokens = Array.isArray(verifiedData) ? verifiedData : (verifiedData.results || []);
+            verifiedTokens = tokens.map((token: any) => ({
+              address: token.address,
+              symbol: token.symbol,
+              name: token.name,
+              decimals: parseInt(token.decimals),
+              balance: '0'
+            }));
+            
+            setVerifiedTokenAddresses(new Set(verifiedTokens.map(t => t.address.toLowerCase())));
+            console.log('✅ Verified tokens loaded:', verifiedTokens.length);
+          } else {
+            console.warn('❌ Failed to fetch verified tokens, using fallback');
+            verifiedTokens = [
+              { address: '0x0000000000000000000000000000000000000000', symbol: 'MON', name: 'Monad', decimals: 18, balance: '0' },
+              { address: '0xf817257fed379853cDe0fa4F97AB987181B1E5Ea', symbol: 'USDC', name: 'USD Coin', decimals: 6, balance: '0' }
+            ];
+            setVerifiedTokenAddresses(new Set(verifiedTokens.map(t => t.address.toLowerCase())));
+          }
+        } catch (error) {
+          console.error('❌ Error fetching verified tokens:', error);
+          verifiedTokens = [
+            { address: '0x0000000000000000000000000000000000000000', symbol: 'MON', name: 'Monad', decimals: 18, balance: '0' },
+            { address: '0xf817257fed379853cDe0fa4F97AB987181B1E5Ea', symbol: 'USDC', name: 'USD Coin', decimals: 6, balance: '0' }
+          ];
+          setVerifiedTokenAddresses(new Set(verifiedTokens.map(t => t.address.toLowerCase())));
+        }
+
+        // Get wallet balances (if wallet connected)
+        let walletTokens: Token[] = [];
+        if (authenticated && wallet?.address) {
+          console.log('🔍 Loading wallet tokens for:', wallet.address);
+          walletTokens = await getWalletBalances(wallet.address);
+          console.log('📊 Wallet tokens from API:', walletTokens);
+        }
+        
+        // Start with verified tokens, then add wallet tokens
+        const allTokens = [...verifiedTokens];
+        
+        // Update with wallet balances
+        for (const walletToken of walletTokens) {
+          const existingIndex = allTokens.findIndex(t => 
+            t.address.toLowerCase() === walletToken.address.toLowerCase()
+          );
+          
+          if (existingIndex >= 0) {
+            allTokens[existingIndex] = { ...allTokens[existingIndex], balance: walletToken.balance };
+          } else {
+            allTokens.push(walletToken);
+          }
+        }
+        
+        // Get prices for all tokens
+        const tokensWithPrices = await Promise.all(
+          allTokens.map(async (token) => {
+            const usdPrice = await getTokenPrice(token.address, validMonPrice);
+            return { ...token, usdPrice };
+          })
+        );
+
+        console.log('📊 Final tokens with prices and balances:', tokensWithPrices);
+        setAvailableTokens(tokensWithPrices);
+        
+        // Set default tokens: MON -> USDC if none selected
+        if (!fromToken && tokensWithPrices.length > 0) {
+          const monToken = tokensWithPrices.find(t => t.symbol === 'MON');
+          setFromToken(monToken || tokensWithPrices[0]);
+        }
+        if (!toToken && tokensWithPrices.length > 0) {
+          const usdcToken = tokensWithPrices.find(t => t.symbol === 'USDC');
+          const fallbackToken = tokensWithPrices.find(t => t.symbol !== fromToken?.symbol);
+          setToToken(usdcToken || fallbackToken || tokensWithPrices[0]);
+        }
+      } catch (error) {
+        console.error('Error loading data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (ready) {
+      loadData();
+    }
+  }, [ready, authenticated, wallet?.address]);
+
+  // USD conversion helpers
+  const getTokenValue = (amount: string, token: Token | null): string => {
+    if (!amount || !token?.usdPrice) return '';
+    const numAmount = parseFloat(amount);
+    if (isNaN(numAmount)) return '';
+    return (numAmount * token.usdPrice).toFixed(2);
+  };
+
+  const getUsdValue = (amount: string, token: Token | null): string => {
+    if (!amount || !token?.usdPrice) return '';
+    const numAmount = parseFloat(amount);
+    if (isNaN(numAmount)) return '';
+    return (numAmount / token.usdPrice).toFixed(6);
+  };
+
+  if (!ready || !mounted) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-gray-600 text-xl">Loading...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-lg mx-auto p-4">
+      {/* Notification */}
+      {notification && (
+        <div className={`mb-4 p-4 rounded-lg border-l-4 ${
+          notification.type === 'success' ? 'bg-green-50 border-green-400 text-green-800' :
+          notification.type === 'error' ? 'bg-red-50 border-red-400 text-red-800' :
+          'bg-blue-50 border-blue-400 text-blue-800'
+        } shadow-sm`}>
+          <div className="flex items-start">
+            <div className="flex-shrink-0">
+              {notification.type === 'success' && (
+                <svg className="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              )}
+              {notification.type === 'error' && (
+                <svg className="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              )}
+              {notification.type === 'info' && (
+                <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              )}
+            </div>
+            <div className="ml-3 flex-1">
+              <p className="text-sm font-medium">{notification.message}</p>
+            </div>
+            <button
+              onClick={() => setNotification(null)}
+              className="flex-shrink-0 ml-2 text-gray-400 hover:text-gray-600"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
+      
+      <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-lg">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-2xl font-bold text-gray-900">Swap</h1>
+          <div className="flex items-center space-x-3">
+            {authenticated && wallet ? (
+              <div className="flex items-center space-x-2">
+                <div className="text-sm text-gray-600">
+                  {wallet.address.slice(0, 6)}...{wallet.address.slice(-4)}
+                </div>
+                <button
+                  onClick={logout}
+                  className="px-3 py-2 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                >
+                  Disconnect
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={login}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+              >
+                Connect Wallet
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Loading State */}
+        {loading && (
+          <div className="text-center py-4 text-gray-500">
+            Loading wallet data...
+          </div>
+        )}
+
+        {/* Wallet Not Connected State */}
+        {!authenticated && !loading && (
+          <div className="text-center py-8 text-gray-500">
+            <div className="mb-4">
+              <svg className="w-12 h-12 mx-auto text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+              </svg>
+            </div>
+            <p className="text-sm">Connect your wallet to see token balances and start trading</p>
+          </div>
+        )}
+
+        {/* From Token */}
+        <div className="mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-gray-600">You pay</span>
+            {fromToken && (
+              <button
+                onClick={() => {
+                  if (fromToken.balance && parseFloat(fromToken.balance) > 0) {
+                    setFromAmount(fromToken.balance);
+                    setFromMode('token');
+                  }
+                }}
+                disabled={!fromToken.balance || parseFloat(fromToken.balance) === 0}
+                className="text-sm text-blue-600 hover:text-blue-700 disabled:text-gray-400 disabled:cursor-not-allowed"
+              >
+                Balance: {fromToken.balance ? parseFloat(fromToken.balance).toFixed(4) : '0.0000'} {fromToken.symbol}
+              </button>
+            )}
+          </div>
+          <div className="bg-gray-50 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-blue-600 rounded-full flex items-center justify-center text-white font-bold">
+                  {fromToken?.symbol.charAt(0) || '?'}
+                </div>
+                <select 
+                  value={fromToken?.address || ''}
+                  onChange={(e) => {
+                    const token = availableTokens.find(t => t.address === e.target.value);
+                    setFromToken(token || null);
+                  }}
+                  className="bg-transparent border-none outline-none font-semibold text-gray-900"
+                >
+                  <option value="">Select token</option>
+                  {(() => {
+                    const verifiedTokens = availableTokens.filter(token => 
+                      verifiedTokenAddresses.has(token.address.toLowerCase())
+                    );
+                    const unverifiedTokens = availableTokens.filter(token => 
+                      !verifiedTokenAddresses.has(token.address.toLowerCase())
+                    );
+                    
+                    const sortTokens = (tokens: typeof availableTokens) => tokens.sort((a, b) => {
+                      const aBalance = parseFloat(a.balance || '0');
+                      const bBalance = parseFloat(b.balance || '0');
+                      
+                      if (aBalance !== bBalance) {
+                        return bBalance - aBalance;
+                      }
+                      
+                      return a.symbol.localeCompare(b.symbol);
+                    });
+                    
+                    const renderTokenOptions = (tokens: typeof availableTokens) => tokens.map(token => {
+                      const balance = parseFloat(token.balance || '0');
+                      const usdValue = balance * (token.usdPrice || 0);
+                      const displayText = balance > 0 
+                        ? `${token.symbol} - ${balance.toFixed(4)} ($${usdValue.toFixed(2)})`
+                        : token.symbol;
+                      
+                      return (
+                        <option key={token.address} value={token.address}>
+                          {displayText}
+                        </option>
+                      );
+                    });
+                    
+                    return (
+                      <>
+                        {verifiedTokens.length > 0 && (
+                          <optgroup label="✓ Verified Tokens">
+                            {renderTokenOptions(sortTokens(verifiedTokens))}
+                          </optgroup>
+                        )}
+                        {unverifiedTokens.length > 0 && (
+                          <optgroup label="⚠ Unverified Tokens">
+                            {renderTokenOptions(sortTokens(unverifiedTokens))}
+                          </optgroup>
+                        )}
+                      </>
+                    );
+                  })()}
+                </select>
+              </div>
+            </div>
+            
+            <div className="relative w-full text-right">
+              <input
+                type="text"
+                value={fromMode === 'usd' && fromAmount ? `$${fromAmount}` : fromAmount}
+                onChange={(e) => {
+                  const value = e.target.value.replace('$', '');
+                  setFromAmount(value);
+                }}
+                placeholder={fromMode === 'usd' ? '$0' : '0'}
+                className="w-full text-right text-3xl font-semibold bg-transparent border-none outline-none placeholder-gray-400 text-gray-900"
+              />
+            </div>
+            
+            {fromAmount && fromToken && (
+              <div className="text-right text-lg text-gray-500 mt-1">
+                {fromMode === 'token' 
+                  ? `$${getTokenValue(fromAmount, fromToken)}`
+                  : `${getUsdValue(fromAmount, fromToken)} ${fromToken.symbol}`
+                }
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Swap Arrow */}
+        <div className="flex justify-center -my-2 relative z-10">
+          <button
+            type="button"
+            onClick={() => {
+              setFromToken(toToken);
+              setToToken(fromToken);
+              setFromAmount(toAmount);
+              setToAmount(fromAmount);
+            }}
+            className="p-2 bg-white rounded-xl border-4 border-gray-50 hover:bg-gray-50 transition-colors"
+          >
+            <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+            </svg>
+          </button>
+        </div>
+
+        {/* To Token */}
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-gray-600">You receive</span>
+            {toToken && (
+              <span className="text-sm text-gray-500">
+                Balance: {toToken.balance ? parseFloat(toToken.balance).toFixed(4) : '0.0000'} {toToken.symbol}
+              </span>
+            )}
+          </div>
+          <div className="bg-gray-50 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 bg-gradient-to-br from-green-400 to-green-600 rounded-full flex items-center justify-center text-white font-bold">
+                  {toToken?.symbol.charAt(0) || '?'}
+                </div>
+                <select 
+                  value={toToken?.address || ''}
+                  onChange={(e) => {
+                    const token = availableTokens.find(t => t.address === e.target.value);
+                    setToToken(token || null);
+                  }}
+                  className="bg-transparent border-none outline-none font-semibold text-gray-900"
+                >
+                  <option value="">Select token</option>
+                  {(() => {
+                    const verifiedTokens = availableTokens.filter(token => 
+                      verifiedTokenAddresses.has(token.address.toLowerCase())
+                    );
+                    const unverifiedTokens = availableTokens.filter(token => 
+                      !verifiedTokenAddresses.has(token.address.toLowerCase())
+                    );
+                    
+                    const sortTokens = (tokens: typeof availableTokens) => tokens.sort((a, b) => {
+                      const aBalance = parseFloat(a.balance || '0');
+                      const bBalance = parseFloat(b.balance || '0');
+                      
+                      if (aBalance !== bBalance) {
+                        return bBalance - aBalance;
+                      }
+                      
+                      return a.symbol.localeCompare(b.symbol);
+                    });
+                    
+                    const renderTokenOptions = (tokens: typeof availableTokens) => tokens.map(token => {
+                      const balance = parseFloat(token.balance || '0');
+                      const usdValue = balance * (token.usdPrice || 0);
+                      const displayText = balance > 0 
+                        ? `${token.symbol} - ${balance.toFixed(4)} ($${usdValue.toFixed(2)})`
+                        : token.symbol;
+                      
+                      return (
+                        <option key={token.address} value={token.address}>
+                          {displayText}
+                        </option>
+                      );
+                    });
+                    
+                    return (
+                      <>
+                        {verifiedTokens.length > 0 && (
+                          <optgroup label="✓ Verified Tokens">
+                            {renderTokenOptions(sortTokens(verifiedTokens))}
+                          </optgroup>
+                        )}
+                        {unverifiedTokens.length > 0 && (
+                          <optgroup label="⚠ Unverified Tokens">
+                            {renderTokenOptions(sortTokens(unverifiedTokens))}
+                          </optgroup>
+                        )}
+                      </>
+                    );
+                  })()}
+                </select>
+              </div>
+            </div>
+            
+            <div className="relative w-full text-right">
+              <input
+                type="text"
+                value={toMode === 'usd' && toAmount ? `$${toAmount}` : toAmount}
+                onChange={(e) => {
+                  const value = e.target.value.replace('$', '');
+                  setToAmount(value);
+                }}
+                placeholder={toMode === 'usd' ? '$0' : '0'}
+                className="w-full text-right text-3xl font-semibold bg-transparent border-none outline-none placeholder-gray-400 text-gray-900"
+              />
+            </div>
+            
+            {toAmount && toToken && (
+              <div className="text-right text-lg text-gray-500 mt-1">
+                {toMode === 'token' 
+                  ? `$${getTokenValue(toAmount, toToken)}`
+                  : `${getUsdValue(toAmount, toToken)} ${toToken.symbol}`
+                }
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Swap Button */}
+        <button
+          disabled={!fromToken || !toToken || !fromAmount || loading}
+          onClick={() => showNotification('info', 'Swap functionality coming soon!')}
+          className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-semibold py-4 px-6 rounded-2xl transition-colors"
+        >
+          {loading ? 'Processing...' : !fromToken || !toToken ? 'Select tokens' : !fromAmount ? 'Enter amount' : 'Swap'}
+        </button>
+
+        {/* Connected Wallet Info */}
+        {wallet && (
+          <div className="mt-4 text-center text-sm text-gray-500">
+            Connected: {wallet.address.slice(0, 6)}...{wallet.address.slice(-4)}
+            {monUsdPrice > 0 && <span className="ml-2">| MON: ${typeof monUsdPrice === 'number' ? monUsdPrice.toFixed(4) : '1.0000'}</span>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

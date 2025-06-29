@@ -93,7 +93,7 @@ export function SimpleSwapInterface() {
   const [monUsdPrice, setMonUsdPrice] = useState<number>(1.0);
   const [loading, setLoading] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const [notification, setNotification] = useState<{type: 'success' | 'error' | 'info', message: string | JSX.Element} | null>(null);
+  const [notification, setNotification] = useState<{type: 'success' | 'error' | 'info', message: string | React.ReactNode} | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [lastEditedField, setLastEditedField] = useState<'from' | 'to'>('from');
   const [approving, setApproving] = useState(false);

@@ -104,7 +104,8 @@ export function SimpleSwapInterface() {
   // Notification helper
   const showNotification = (type: 'success' | 'error' | 'info', message: string | JSX.Element, duration = 5000) => {
     setNotification({ type, message });
-    setTimeout(() => setNotification(null), duration);
+    // Commented out timer to debug - toast should stay forever now
+    // setTimeout(() => setNotification(null), duration);
   };
 
   // Quote fetching function
@@ -438,7 +439,7 @@ export function SimpleSwapInterface() {
               }
             }
           }
-        }, 2000);
+        }, 0);
       } else {
         throw new Error(`Transaction failed - Status: ${receipt?.status || 'unknown'}`);
       }

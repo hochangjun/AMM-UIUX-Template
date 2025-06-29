@@ -46,17 +46,26 @@ async function getTokenPrice(address: string, monUsdPrice: number): Promise<numb
 
 async function getWalletBalances(walletAddress: string): Promise<Token[]> {
   try {
-    const endpoint = `/wallet/${walletAddress}/balances`;
+    // Try the wallet category endpoint first (more reliable)
+    const categoryEndpoint = `/tokens/category/wallet?address=${walletAddress}&limit=100`;
     console.log('🔗 Fetching wallet balances for:', walletAddress);
-    console.log('🌐 Full endpoint:', endpoint);
+    console.log('🌐 Using category endpoint:', categoryEndpoint);
     
-    const response = await fetch(`/api/monorail?endpoint=${encodeURIComponent(endpoint)}`);
-    console.log('📡 API Response status:', response.status, response.statusText);
+    let response = await fetch(`/api/monorail?endpoint=${encodeURIComponent(categoryEndpoint)}`);
+    console.log('📡 Category API Response status:', response.status, response.statusText);
     
     if (!response.ok) {
-      const errorText = await response.text();
-      console.warn(`❌ API returned error: ${response.status} ${response.statusText}`, errorText);
-      return [];
+      // Fallback to the original endpoint
+      console.log('⚠️ Category endpoint failed, trying original balance endpoint...');
+      const fallbackEndpoint = `/wallet/${walletAddress}/balances`;
+      response = await fetch(`/api/monorail?endpoint=${encodeURIComponent(fallbackEndpoint)}`);
+      console.log('📡 Fallback API Response status:', response.status, response.statusText);
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.warn(`❌ Both API endpoints failed: ${response.status} ${response.statusText}`, errorText);
+        return [];
+      }
     }
     
     const data = await response.json();

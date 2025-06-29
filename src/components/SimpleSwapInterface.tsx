@@ -44,6 +44,9 @@ async function getMonUsdPrice(): Promise<number> {
 const PRICE_CACHE_KEY = 'monorail_token_prices';
 const PRICE_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
+const BALANCE_CACHE_KEY = 'monorail_wallet_balances';
+const BALANCE_CACHE_DURATION = 30 * 1000; // 30 seconds
+
 function getCachedPrice(address: string): number | null {
   try {
     const cached = localStorage.getItem(PRICE_CACHE_KEY);
@@ -80,6 +83,42 @@ function setCachedPrice(address: string, price: number): void {
   }
 }
 
+function getCachedBalances(walletAddress: string): Token[] | null {
+  try {
+    const cached = localStorage.getItem(BALANCE_CACHE_KEY);
+    if (!cached) return null;
+    
+    const cache = JSON.parse(cached);
+    const walletCache = cache[walletAddress.toLowerCase()];
+    if (!walletCache) return null;
+    
+    const isExpired = Date.now() - walletCache.timestamp > BALANCE_CACHE_DURATION;
+    if (isExpired) return null;
+    
+    console.log(`💾 Using cached balances for ${walletAddress}`);
+    return walletCache.balances;
+  } catch (error) {
+    console.warn('Failed to read balance cache:', error);
+    return null;
+  }
+}
+
+function setCachedBalances(walletAddress: string, balances: Token[]): void {
+  try {
+    const cached = localStorage.getItem(BALANCE_CACHE_KEY);
+    const cache = cached ? JSON.parse(cached) : {};
+    
+    cache[walletAddress.toLowerCase()] = {
+      balances,
+      timestamp: Date.now()
+    };
+    
+    localStorage.setItem(BALANCE_CACHE_KEY, JSON.stringify(cache));
+  } catch (error) {
+    console.warn('Failed to cache balances:', error);
+  }
+}
+
 async function getTokenPrice(address: string, monUsdPrice: number): Promise<number> {
   if (address === '0x0000000000000000000000000000000000000000') {
     return monUsdPrice; // MON price
@@ -109,6 +148,12 @@ async function getTokenPrice(address: string, monUsdPrice: number): Promise<numb
 }
 
 async function getWalletBalances(walletAddress: string): Promise<Token[]> {
+  // Check cache first
+  const cachedBalances = getCachedBalances(walletAddress);
+  if (cachedBalances !== null) {
+    return cachedBalances;
+  }
+  
   try {
     // Try the wallet category endpoint first (more reliable)
     const categoryEndpoint = `/tokens/category/wallet?address=${walletAddress}&limit=100`;
@@ -176,11 +221,17 @@ async function getWalletBalances(walletAddress: string): Promise<Token[]> {
     // If no tokens returned, add default MON and USDC with 0 balance for testing
     if (mappedTokens.length === 0) {
       console.warn('⚠️ No tokens returned from API, using defaults');
-      return [
+      const defaultTokens = [
         { address: '0x0000000000000000000000000000000000000000', symbol: 'MON', name: 'Monad', decimals: 18, balance: '0' },
         { address: '0xf817257fed379853cDe0fa4F97AB987181B1E5Ea', symbol: 'USDC', name: 'USD Coin', decimals: 6, balance: '0' }
       ];
+      setCachedBalances(walletAddress, defaultTokens);
+      return defaultTokens;
     }
+    
+    // Cache the successful result
+    setCachedBalances(walletAddress, mappedTokens);
+    console.log(`💾 Cached balances for ${walletAddress}`);
     
     return mappedTokens;
   } catch (error) {

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { usePrivy, useWallets } from '@privy-io/react-auth';
+import { getTokenBalanceFromChain } from '@/utils/getTokenBalance';
 
 // Simple token interface
 interface Token {
@@ -47,34 +48,75 @@ async function getWalletBalances(walletAddress: string): Promise<Token[]> {
   try {
     const endpoint = `/wallet/${walletAddress}/balances`;
     console.log('🔗 Fetching wallet balances for:', walletAddress);
+    console.log('🌐 Full endpoint:', endpoint);
     
     const response = await fetch(`/api/monorail?endpoint=${encodeURIComponent(endpoint)}`);
     console.log('📡 API Response status:', response.status, response.statusText);
     
     if (!response.ok) {
-      console.warn(`❌ API returned error: ${response.status} ${response.statusText}`);
+      const errorText = await response.text();
+      console.warn(`❌ API returned error: ${response.status} ${response.statusText}`, errorText);
       return [];
     }
     
     const data = await response.json();
-    console.log('📋 Raw API response:', data);
+    console.log('📋 Raw API response:', JSON.stringify(data, null, 2));
     
-    const tokens = Array.isArray(data) ? data : (data.results || []);
+    // Handle different possible response formats
+    let tokens = [];
+    if (Array.isArray(data)) {
+      tokens = data;
+    } else if (data.results && Array.isArray(data.results)) {
+      tokens = data.results;
+    } else if (data.balances && Array.isArray(data.balances)) {
+      tokens = data.balances;
+    } else if (data.tokens && Array.isArray(data.tokens)) {
+      tokens = data.tokens;
+    } else {
+      console.warn('⚠️ Unexpected API response format:', typeof data, Object.keys(data));
+    }
+    
     console.log('🪙 Tokens from response:', tokens.length);
     
-    const mappedTokens = tokens.map((token: any) => ({
-      address: token.address,
-      symbol: token.symbol,
-      name: token.name,
-      decimals: parseInt(token.decimals),
-      balance: token.balance || '0'
-    }));
+    const mappedTokens = tokens.map((token: any) => {
+      // Log each token to debug balance field
+      console.log('🔍 Token data:', {
+        address: token.address,
+        symbol: token.symbol,
+        balance: token.balance,
+        amount: token.amount,
+        value: token.value,
+        formatted_balance: token.formatted_balance
+      });
+      
+      return {
+        address: token.address || token.token_address || '',
+        symbol: token.symbol || token.token_symbol || '',
+        name: token.name || token.token_name || '',
+        decimals: parseInt(token.decimals || token.token_decimals || '18'),
+        balance: token.balance || token.amount || token.value || token.formatted_balance || '0'
+      };
+    });
     
     console.log('🗂️ Mapped tokens:', mappedTokens);
+    
+    // If no tokens returned, add default MON and USDC with 0 balance for testing
+    if (mappedTokens.length === 0) {
+      console.warn('⚠️ No tokens returned from API, using defaults');
+      return [
+        { address: '0x0000000000000000000000000000000000000000', symbol: 'MON', name: 'Monad', decimals: 18, balance: '0' },
+        { address: '0xf817257fed379853cDe0fa4F97AB987181B1E5Ea', symbol: 'USDC', name: 'USD Coin', decimals: 6, balance: '0' }
+      ];
+    }
+    
     return mappedTokens;
   } catch (error) {
     console.error('❌ Failed to fetch wallet balances:', error);
-    return [];
+    // Return default tokens on error
+    return [
+      { address: '0x0000000000000000000000000000000000000000', symbol: 'MON', name: 'Monad', decimals: 18, balance: '0' },
+      { address: '0xf817257fed379853cDe0fa4F97AB987181B1E5Ea', symbol: 'USDC', name: 'USD Coin', decimals: 6, balance: '0' }
+    ];
   }
 }
 
@@ -102,10 +144,9 @@ export function SimpleSwapInterface() {
   const wallet = wallets[0];
 
   // Notification helper
-  const showNotification = (type: 'success' | 'error' | 'info', message: string | React.ReactNode, duration = 5000) => {
+  const showNotification = (type: 'success' | 'error' | 'info', message: string | React.ReactNode) => {
     setNotification({ type, message });
-    // Commented out timer to debug - toast should stay forever now
-    // setTimeout(() => setNotification(null), duration);
+    // Notifications stay visible until manually closed for debugging
   };
 
   // Quote fetching function
@@ -405,7 +446,7 @@ export function SimpleSwapInterface() {
             </a>
           </span>
         );
-        showNotification('success', successMessage, 5000);
+        showNotification('success', successMessage);
         
         // Refresh balances after successful swap
         setTimeout(async () => {
@@ -525,6 +566,40 @@ export function SimpleSwapInterface() {
           console.log('🔍 Loading wallet tokens for:', wallet.address);
           walletTokens = await getWalletBalances(wallet.address);
           console.log('📊 Wallet tokens from API:', walletTokens);
+          
+          // If API returns no balances or empty balances, try fetching from blockchain
+          const hasNonZeroBalance = walletTokens.some(t => parseFloat(t.balance || '0') > 0);
+          if (!hasNonZeroBalance && wallet) {
+            console.log('⚡ API returned no balances, trying blockchain method...');
+            try {
+              const provider = await wallet.getEthereumProvider();
+              
+              // Update balances for verified tokens using blockchain
+              for (const token of verifiedTokens) {
+                const balance = await getTokenBalanceFromChain(
+                  provider,
+                  token.address,
+                  wallet.address,
+                  token.decimals
+                );
+                
+                if (parseFloat(balance) > 0) {
+                  console.log(`✅ Found balance for ${token.symbol}: ${balance}`);
+                  const existingIndex = walletTokens.findIndex(t => 
+                    t.address.toLowerCase() === token.address.toLowerCase()
+                  );
+                  
+                  if (existingIndex >= 0) {
+                    walletTokens[existingIndex].balance = balance;
+                  } else {
+                    walletTokens.push({ ...token, balance });
+                  }
+                }
+              }
+            } catch (error) {
+              console.error('Failed to fetch balances from blockchain:', error);
+            }
+          }
         }
         
         // Start with verified tokens, then add wallet tokens

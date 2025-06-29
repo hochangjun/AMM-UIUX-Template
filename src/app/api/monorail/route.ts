@@ -15,6 +15,14 @@ export async function GET(request: NextRequest) {
     const url = `${MONORAIL_BASE_URL}${endpoint}`;
     console.log('📡 Proxying request to:', url);
     
+    // Log wallet balance requests specifically
+    if (endpoint.includes('/wallet/') && endpoint.includes('/balances')) {
+      const walletMatch = endpoint.match(/\/wallet\/(0x[a-fA-F0-9]{40})\/balances/);
+      if (walletMatch) {
+        console.log('💰 Fetching balances for wallet:', walletMatch[1]);
+      }
+    }
+    
     // Forward the request to Monorail API
     const response = await fetch(url, {
       method: 'GET',
@@ -24,9 +32,12 @@ export async function GET(request: NextRequest) {
       },
     });
     
+    console.log('📊 Response headers:', Object.fromEntries(response.headers.entries()));
+    
     if (!response.ok) {
       console.error('❌ Monorail API error:', response.status, response.statusText);
       const errorText = await response.text();
+      console.error('❌ Error details:', errorText);
       return NextResponse.json(
         { error: `API error: ${response.status} ${response.statusText}`, details: errorText },
         { status: response.status }
@@ -35,6 +46,11 @@ export async function GET(request: NextRequest) {
     
     const data = await response.json();
     console.log('✅ Monorail API response received, size:', JSON.stringify(data).length);
+    
+    // Log wallet balance responses specifically
+    if (endpoint.includes('/wallet/') && endpoint.includes('/balances')) {
+      console.log('💰 Wallet balance response:', JSON.stringify(data).substring(0, 500) + '...');
+    }
     
     return NextResponse.json(data);
   } catch (error) {

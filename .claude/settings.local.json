@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(touch:*)"
+      "Bash(touch:*)",
+      "Bash(ls:*)",
+      "Bash(rm:*)",
+      "Bash(git add:*)"
     ],
     "deny": []
   }

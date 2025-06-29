@@ -114,12 +114,18 @@ export function SimpleSwapInterface() {
       const fromAddress = fromToken.address;
       const toAddress = toToken.address;
       
-      // Convert amount to proper decimals
-      const rawAmount = isFromAmount 
-        ? (parseFloat(amount) * Math.pow(10, fromToken.decimals)).toString()
-        : (parseFloat(amount) * Math.pow(10, toToken.decimals)).toString();
+      // Convert amount to token amount if in USD mode
+      let tokenAmount = amount;
+      if (isFromAmount && fromMode === 'usd' && fromToken.usdPrice) {
+        tokenAmount = (parseFloat(amount) / fromToken.usdPrice).toString();
+      } else if (!isFromAmount && toMode === 'usd' && toToken.usdPrice) {
+        tokenAmount = (parseFloat(amount) / toToken.usdPrice).toString();
+      }
       
-      const response = await fetch(`/api/pathfinder?from=${fromAddress}&to=${toAddress}&amount=${rawAmount}&sender=${wallet?.address || ''}`);
+      // Pathfinder API expects decimal format, not wei
+      const apiAmount = parseFloat(tokenAmount).toString();
+      
+      const response = await fetch(`/api/pathfinder?from=${fromAddress}&to=${toAddress}&amount=${apiAmount}&sender=${wallet?.address || ''}`);
       
       if (!response.ok) {
         throw new Error(`Quote failed: ${response.status}`);
@@ -127,13 +133,22 @@ export function SimpleSwapInterface() {
       
       const quoteData = await response.json();
       
-      if (quoteData.quote && quoteData.quote.toAmount) {
-        const outputAmount = parseFloat(quoteData.quote.toAmount) / Math.pow(10, toToken.decimals);
+      if (quoteData.output) {
+        // Pathfinder returns decimal amount directly in 'output' field
+        const outputAmount = parseFloat(quoteData.output);
         
         if (isFromAmount) {
-          setToAmount(outputAmount.toFixed(6));
+          // Set toAmount based on toMode
+          const displayAmount = toMode === 'usd' && toToken.usdPrice 
+            ? formatSignificantFigures(outputAmount * toToken.usdPrice, 4)
+            : formatSignificantFigures(outputAmount, 4);
+          setToAmount(displayAmount);
         } else {
-          setFromAmount(outputAmount.toFixed(6));
+          // Set fromAmount based on fromMode  
+          const displayAmount = fromMode === 'usd' && fromToken.usdPrice
+            ? formatSignificantFigures(outputAmount * fromToken.usdPrice, 4)
+            : formatSignificantFigures(outputAmount, 4);
+          setFromAmount(displayAmount);
         }
       }
     } catch (error) {
@@ -165,6 +180,45 @@ export function SimpleSwapInterface() {
     return () => clearTimeout(timeoutId);
   }, [toAmount, fromToken, toToken, lastEditedField]);
 
+  // Handle mode changes - convert displayed values when toggling USD/TOKEN
+  useEffect(() => {
+    if (!fromAmount || !fromToken?.usdPrice) return;
+    // Don't trigger if user just changed the input
+    if (lastEditedField === 'from') return;
+    
+    // Convert the existing amount when mode changes
+    const currentTokenAmount = fromMode === 'usd' 
+      ? parseFloat(fromAmount) / fromToken.usdPrice
+      : parseFloat(fromAmount);
+    
+    const newDisplayAmount = fromMode === 'usd'
+      ? formatSignificantFigures(currentTokenAmount * fromToken.usdPrice, 4)
+      : formatSignificantFigures(currentTokenAmount, 4);
+    
+    if (newDisplayAmount !== fromAmount) {
+      setFromAmount(newDisplayAmount);
+    }
+  }, [fromMode, fromToken?.usdPrice]);
+
+  useEffect(() => {
+    if (!toAmount || !toToken?.usdPrice) return;
+    // Don't trigger if user just changed the input
+    if (lastEditedField === 'to') return;
+    
+    // Convert the existing amount when mode changes
+    const currentTokenAmount = toMode === 'usd' 
+      ? parseFloat(toAmount) / toToken.usdPrice
+      : parseFloat(toAmount);
+    
+    const newDisplayAmount = toMode === 'usd'
+      ? formatSignificantFigures(currentTokenAmount * toToken.usdPrice, 4)
+      : formatSignificantFigures(currentTokenAmount, 4);
+    
+    if (newDisplayAmount !== toAmount) {
+      setToAmount(newDisplayAmount);
+    }
+  }, [toMode, toToken?.usdPrice]);
+
   // Swap execution function
   const executeSwap = async () => {
     if (!fromToken || !toToken || !fromAmount || !wallet?.address) {
@@ -179,9 +233,16 @@ export function SimpleSwapInterface() {
       // Get fresh quote for the swap
       const fromAddress = fromToken.address;
       const toAddress = toToken.address;
-      const rawAmount = (parseFloat(fromAmount) * Math.pow(10, fromToken.decimals)).toString();
+      
+      // Convert to token amount if in USD mode
+      let tokenAmount = fromAmount;
+      if (fromMode === 'usd' && fromToken.usdPrice) {
+        tokenAmount = (parseFloat(fromAmount) / fromToken.usdPrice).toString();
+      }
+      
+      const apiAmount = parseFloat(tokenAmount).toString();
 
-      const response = await fetch(`/api/pathfinder?from=${fromAddress}&to=${toAddress}&amount=${rawAmount}&sender=${wallet.address}`);
+      const response = await fetch(`/api/pathfinder?from=${fromAddress}&to=${toAddress}&amount=${apiAmount}&sender=${wallet.address}`);
       
       if (!response.ok) {
         throw new Error(`Failed to get swap quote: ${response.status}`);
@@ -189,29 +250,37 @@ export function SimpleSwapInterface() {
       
       const quoteData = await response.json();
       
-      if (!quoteData.quote || !quoteData.quote.transactionRequest) {
+      if (!quoteData.transaction) {
         throw new Error('Invalid swap quote received');
       }
 
       // Execute the transaction using wallet
-      const txRequest = quoteData.quote.transactionRequest;
+      const txRequest = quoteData.transaction;
       
       showNotification('info', 'Please confirm the transaction in your wallet...');
       
-      const txResponse = await wallet.sendTransaction({
-        to: txRequest.to,
-        data: txRequest.data,
-        value: txRequest.value || '0',
-        gasLimit: txRequest.gasLimit
+      // Use Privy's wallet interface
+      const provider = await wallet.getEthereumProvider();
+      const txResponse = await provider.request({
+        method: 'eth_sendTransaction',
+        params: [{
+          to: txRequest.to,
+          data: txRequest.data,
+          value: txRequest.value || '0x0',
+          from: wallet.address
+        }]
       });
 
       showNotification('info', 'Transaction submitted. Waiting for confirmation...');
       
-      // Wait for transaction confirmation
-      const receipt = await txResponse.wait();
+      // Wait for transaction confirmation  
+      const receipt = await provider.request({
+        method: 'eth_getTransactionReceipt',
+        params: [txResponse]
+      });
       
-      if (receipt.status === 1) {
-        showNotification('success', `Swap completed! Transaction: ${txResponse.hash.slice(0, 10)}...`);
+      if (receipt && receipt.status === '0x1') {
+        showNotification('success', `Swap completed! Transaction: ${txResponse.slice(0, 10)}...`);
         // Reset form
         setFromAmount('');
         setToAmount('');
@@ -360,7 +429,15 @@ export function SimpleSwapInterface() {
     if (!amount || !token?.usdPrice) return '';
     const numAmount = parseFloat(amount);
     if (isNaN(numAmount)) return '';
-    return (numAmount / token.usdPrice).toFixed(6);
+    return formatSignificantFigures(numAmount / token.usdPrice, 4);
+  };
+
+  // Format number to significant figures
+  const formatSignificantFigures = (num: number, sigFigs: number): string => {
+    if (num === 0) return '0';
+    const magnitude = Math.floor(Math.log10(Math.abs(num)));
+    const factor = Math.pow(10, sigFigs - 1 - magnitude);
+    return (Math.round(num * factor) / factor).toString();
   };
 
   if (!ready || !mounted) {
@@ -463,15 +540,7 @@ export function SimpleSwapInterface() {
         {/* From Token */}
         <div className="mb-4">
           <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center space-x-2">
-              <span className="text-sm font-medium text-gray-600">You pay</span>
-              <button
-                onClick={() => setFromMode(fromMode === 'token' ? 'usd' : 'token')}
-                className="px-2 py-1 text-xs font-medium bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
-              >
-                {fromMode === 'token' ? 'USD' : 'TOKEN'}
-              </button>
-            </div>
+            <span className="text-sm font-medium text-gray-600">You pay</span>
             {fromToken && (
               <button
                 onClick={() => {
@@ -564,8 +633,17 @@ export function SimpleSwapInterface() {
                   setLastEditedField('from');
                 }}
                 placeholder={fromMode === 'usd' ? '$0' : '0'}
-                className="w-full text-right text-3xl font-semibold bg-transparent border-none outline-none placeholder-gray-400 text-gray-900"
+                className="w-full text-right text-3xl font-semibold bg-transparent border-none outline-none placeholder-gray-400 text-gray-900 pr-16"
               />
+              <button
+                onClick={() => setFromMode(fromMode === 'token' ? 'usd' : 'token')}
+                className="absolute right-0 top-1/2 transform -translate-y-1/2 p-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                title={`Switch to ${fromMode === 'token' ? 'USD' : 'TOKEN'} mode`}
+              >
+                <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+                </svg>
+              </button>
             </div>
             
             {fromAmount && fromToken && (
@@ -600,15 +678,7 @@ export function SimpleSwapInterface() {
         {/* To Token */}
         <div className="mb-6">
           <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center space-x-2">
-              <span className="text-sm font-medium text-gray-600">You receive</span>
-              <button
-                onClick={() => setToMode(toMode === 'token' ? 'usd' : 'token')}
-                className="px-2 py-1 text-xs font-medium bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
-              >
-                {toMode === 'token' ? 'USD' : 'TOKEN'}
-              </button>
-            </div>
+            <span className="text-sm font-medium text-gray-600">You receive</span>
             {toToken && (
               <span className="text-sm text-gray-500">
                 Balance: {toToken.balance ? parseFloat(toToken.balance).toFixed(4) : '0.0000'} {toToken.symbol}
@@ -692,8 +762,17 @@ export function SimpleSwapInterface() {
                   setLastEditedField('to');
                 }}
                 placeholder={toMode === 'usd' ? '$0' : '0'}
-                className="w-full text-right text-3xl font-semibold bg-transparent border-none outline-none placeholder-gray-400 text-gray-900"
+                className="w-full text-right text-3xl font-semibold bg-transparent border-none outline-none placeholder-gray-400 text-gray-900 pr-16"
               />
+              <button
+                onClick={() => setToMode(toMode === 'token' ? 'usd' : 'token')}
+                className="absolute right-0 top-1/2 transform -translate-y-1/2 p-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                title={`Switch to ${toMode === 'token' ? 'USD' : 'TOKEN'} mode`}
+              >
+                <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+                </svg>
+              </button>
             </div>
             
             {toAmount && toToken && (

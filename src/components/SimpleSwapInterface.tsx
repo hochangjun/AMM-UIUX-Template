@@ -16,15 +16,67 @@ interface Token {
 
 // Simple API functions for Monorail using proxy
 async function getMonUsdPrice(): Promise<number> {
+  // Check cache first
+  const cachedPrice = getCachedPrice('MON_USD_PRICE');
+  if (cachedPrice !== null) {
+    return cachedPrice;
+  }
+  
   try {
     const response = await fetch('/api/monorail?endpoint=/symbol/MONUSD');
     if (!response.ok) return 1.0; // fallback
     const data = await response.json();
     const price = parseFloat(data.price) || 1.0;
-    return isNaN(price) ? 1.0 : price;
+    const validPrice = isNaN(price) ? 1.0 : price;
+    
+    // Cache MON price for 2 minutes (more frequent updates)
+    setCachedPrice('MON_USD_PRICE', validPrice);
+    console.log(`🌐 Fetched and cached MON USD price: ${validPrice}`);
+    
+    return validPrice;
   } catch (error) {
     console.warn('Failed to fetch MON price:', error);
     return 1.0; // fallback
+  }
+}
+
+// Cache helpers for token prices
+const PRICE_CACHE_KEY = 'monorail_token_prices';
+const PRICE_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+function getCachedPrice(address: string): number | null {
+  try {
+    const cached = localStorage.getItem(PRICE_CACHE_KEY);
+    if (!cached) return null;
+    
+    const cache = JSON.parse(cached);
+    const tokenCache = cache[address];
+    if (!tokenCache) return null;
+    
+    const isExpired = Date.now() - tokenCache.timestamp > PRICE_CACHE_DURATION;
+    if (isExpired) return null;
+    
+    console.log(`💾 Using cached price for ${address}: ${tokenCache.price}`);
+    return tokenCache.price;
+  } catch (error) {
+    console.warn('Failed to read price cache:', error);
+    return null;
+  }
+}
+
+function setCachedPrice(address: string, price: number): void {
+  try {
+    const cached = localStorage.getItem(PRICE_CACHE_KEY);
+    const cache = cached ? JSON.parse(cached) : {};
+    
+    cache[address] = {
+      price,
+      timestamp: Date.now()
+    };
+    
+    localStorage.setItem(PRICE_CACHE_KEY, JSON.stringify(cache));
+  } catch (error) {
+    console.warn('Failed to cache price:', error);
   }
 }
 
@@ -33,11 +85,23 @@ async function getTokenPrice(address: string, monUsdPrice: number): Promise<numb
     return monUsdPrice; // MON price
   }
   
+  // Check cache first
+  const cachedPrice = getCachedPrice(address);
+  if (cachedPrice !== null) {
+    return cachedPrice;
+  }
+  
   try {
     const response = await fetch(`/api/monorail?endpoint=/token/${address}`);
     if (!response.ok) return 0;
     const data = await response.json();
-    return (data.mon_per_token || 0) * monUsdPrice;
+    const price = (data.mon_per_token || 0) * monUsdPrice;
+    
+    // Cache the result
+    setCachedPrice(address, price);
+    console.log(`🌐 Fetched and cached price for ${address}: ${price}`);
+    
+    return price;
   } catch (error) {
     console.warn(`Failed to fetch price for ${address}:`, error);
     return 0;
@@ -627,13 +691,32 @@ export function SimpleSwapInterface() {
           }
         }
         
-        // Get prices for all tokens
-        const tokensWithPrices = await Promise.all(
-          allTokens.map(async (token) => {
+        // Progressive loading: Show tokens with balances immediately
+        console.log('📊 Setting initial tokens with balances (no prices yet):', allTokens);
+        setAvailableTokens(allTokens.map(token => ({ ...token, usdPrice: 0 })));
+        
+        // Smart fetching: Only get prices for tokens with balances or essential tokens
+        const tokensNeedingPrices = allTokens.filter(token => {
+          const hasBalance = parseFloat(token.balance || '0') > 0;
+          const isEssential = ['MON', 'USDC'].includes(token.symbol);
+          return hasBalance || isEssential;
+        });
+        
+        console.log(`💰 Fetching prices for ${tokensNeedingPrices.length} tokens (out of ${allTokens.length})`);
+        
+        // Get prices for filtered tokens in parallel
+        const priceResults = await Promise.all(
+          tokensNeedingPrices.map(async (token) => {
             const usdPrice = await getTokenPrice(token.address, validMonPrice);
-            return { ...token, usdPrice };
+            return { address: token.address, usdPrice };
           })
         );
+        
+        // Update tokens with prices
+        const tokensWithPrices = allTokens.map(token => {
+          const priceData = priceResults.find(p => p.address === token.address);
+          return { ...token, usdPrice: priceData?.usdPrice || 0 };
+        });
 
         console.log('📊 Final tokens with prices and balances:', tokensWithPrices);
         setAvailableTokens(tokensWithPrices);

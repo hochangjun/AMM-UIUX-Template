@@ -20,7 +20,7 @@ A modern, professional DEX interface for Monad testnet built with Next.js 15, Re
 ## 🛠 Tech Stack
 
 - **Frontend**: Next.js 15 with React 19
-- **Styling**: Tailwind CSS 4
+- **Styling**: Tailwind CSS 3
 - **Wallet**: Privy for Web3 authentication
 - **API**: Monorail Data API & Pathfinder for swaps
 - **Network**: Monad Testnet
@@ -44,7 +44,6 @@ cd monorailtest
 
 2. **Install dependencies:**
 ```bash
-cd web
 npm install
 ```
 
@@ -120,7 +119,6 @@ npm run start
 ## 🏗 Project Structure
 
 ```
-web/
 ├── src/
 │   ├── app/
 │   │   ├── api/           # API proxy routes

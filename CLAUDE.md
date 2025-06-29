@@ -9,6 +9,7 @@ This is a Monad testnet AMM interface built with Next.js 15, React 19, and Tailw
 - Follow the existing code patterns and conventions
 - Run `npm run dev` to test changes locally 
 - Use TypeScript strict mode and maintain type safety
+- **Always push changes to GitHub after completing tasks**
 
 ## AMM-Specific Guidelines
 - Prioritize wallet-owned tokens in dropdowns

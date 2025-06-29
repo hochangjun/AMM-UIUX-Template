@@ -642,11 +642,20 @@ export function SimpleSwapInterface() {
         if (!fromToken && tokensWithPrices.length > 0) {
           const monToken = tokensWithPrices.find(t => t.symbol === 'MON');
           setFromToken(monToken || tokensWithPrices[0]);
+        } else if (fromToken) {
+          // Update existing fromToken with latest data (including balance)
+          const updatedFromToken = tokensWithPrices.find(t => t.address === fromToken.address);
+          if (updatedFromToken) setFromToken(updatedFromToken);
         }
+        
         if (!toToken && tokensWithPrices.length > 0) {
           const usdcToken = tokensWithPrices.find(t => t.symbol === 'USDC');
           const fallbackToken = tokensWithPrices.find(t => t.symbol !== fromToken?.symbol);
           setToToken(usdcToken || fallbackToken || tokensWithPrices[0]);
+        } else if (toToken) {
+          // Update existing toToken with latest data (including balance)
+          const updatedToToken = tokensWithPrices.find(t => t.address === toToken.address);
+          if (updatedToToken) setToToken(updatedToToken);
         }
       } catch (error) {
         console.error('Error loading data:', error);

@@ -93,14 +93,16 @@ export function SimpleSwapInterface() {
   const [monUsdPrice, setMonUsdPrice] = useState<number>(1.0);
   const [loading, setLoading] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const [notification, setNotification] = useState<{type: 'success' | 'error' | 'info', message: string} | null>(null);
+  const [notification, setNotification] = useState<{type: 'success' | 'error' | 'info', message: string | JSX.Element} | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [lastEditedField, setLastEditedField] = useState<'from' | 'to'>('from');
+  const [approving, setApproving] = useState(false);
+  const [needsApproval, setNeedsApproval] = useState(false);
 
   const wallet = wallets[0];
 
   // Notification helper
-  const showNotification = (type: 'success' | 'error' | 'info', message: string, duration = 5000) => {
+  const showNotification = (type: 'success' | 'error' | 'info', message: string | JSX.Element, duration = 5000) => {
     setNotification({ type, message });
     setTimeout(() => setNotification(null), duration);
   };
@@ -174,7 +176,7 @@ export function SimpleSwapInterface() {
     
     const timeoutId = setTimeout(() => {
       fetchQuote(fromToken, toToken, fromAmount, true);
-    }, 500);
+    }, 200);
     
     return () => clearTimeout(timeoutId);
   }, [fromAmount, fromToken, toToken, lastEditedField]);
@@ -184,7 +186,7 @@ export function SimpleSwapInterface() {
     
     const timeoutId = setTimeout(() => {
       fetchQuote(toToken, fromToken, toAmount, false);
-    }, 500);
+    }, 200);
     
     return () => clearTimeout(timeoutId);
   }, [toAmount, fromToken, toToken, lastEditedField]);
@@ -228,6 +230,82 @@ export function SimpleSwapInterface() {
     }
   }, [toMode, toToken?.usdPrice]);
 
+  // Check if token approval is needed
+  const checkApproval = async (tokenAddress: string, spender: string, amount: string): Promise<boolean> => {
+    try {
+      const provider = await wallet.getEthereumProvider();
+      
+      // ERC20 allowance call
+      const allowanceCall = {
+        to: tokenAddress,
+        data: `0xdd62ed3e${wallet.address.slice(2).padStart(64, '0')}${spender.slice(2).padStart(64, '0')}`
+      };
+      
+      const allowanceHex = await provider.request({
+        method: 'eth_call',
+        params: [allowanceCall, 'latest']
+      });
+      
+      const allowance = parseInt(allowanceHex, 16);
+      const requiredAmount = parseFloat(amount) * Math.pow(10, fromToken?.decimals || 18);
+      
+      return allowance >= requiredAmount;
+    } catch (error) {
+      console.error('Error checking approval:', error);
+      return false;
+    }
+  };
+
+  // Approve token spending
+  const approveToken = async (tokenAddress: string, spender: string, amount: string) => {
+    try {
+      setApproving(true);
+      showNotification('info', 'Approving token spending...');
+      
+      const provider = await wallet.getEthereumProvider();
+      const rawAmount = (parseFloat(amount) * Math.pow(10, fromToken?.decimals || 18)).toString(16);
+      
+      // ERC20 approve call
+      const txResponse = await provider.request({
+        method: 'eth_sendTransaction',
+        params: [{
+          to: tokenAddress,
+          data: `0x095ea7b3${spender.slice(2).padStart(64, '0')}${rawAmount.padStart(64, '0')}`,
+          from: wallet.address
+        }]
+      });
+
+      showNotification('info', 'Approval transaction submitted. Waiting for confirmation...');
+      
+      // Wait for approval confirmation
+      let receipt = null;
+      let attempts = 0;
+      while (!receipt && attempts < 30) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        receipt = await provider.request({
+          method: 'eth_getTransactionReceipt',
+          params: [txResponse]
+        });
+        attempts++;
+      }
+      
+      if (receipt && receipt.status === '0x1') {
+        showNotification('success', 'Token approval confirmed! Executing swap...');
+        setNeedsApproval(false);
+        // Auto-execute swap after approval
+        executeSwap();
+      } else {
+        throw new Error('Approval transaction failed');
+      }
+      
+    } catch (error: any) {
+      console.error('Approval error:', error);
+      showNotification('error', `Approval failed: ${error.message}`);
+    } finally {
+      setApproving(false);
+    }
+  };
+
   // Swap execution function
   const executeSwap = async () => {
     if (!fromToken || !toToken || !fromAmount || !wallet?.address) {
@@ -254,19 +332,30 @@ export function SimpleSwapInterface() {
       const response = await fetch(`/api/pathfinder?from=${fromAddress}&to=${toAddress}&amount=${apiAmount}&sender=${wallet.address}`);
       
       if (!response.ok) {
-        throw new Error(`Failed to get swap quote: ${response.status}`);
+        const errorText = await response.text();
+        throw new Error(`Failed to get swap quote: ${response.status} - ${errorText}`);
       }
       
       const quoteData = await response.json();
       
       if (!quoteData.transaction) {
-        throw new Error('Invalid swap quote received');
+        throw new Error('Invalid swap quote received - no transaction data');
       }
 
-      // Execute the transaction using wallet
       const txRequest = quoteData.transaction;
       
-      showNotification('info', 'Please confirm the transaction in your wallet...');
+      // Check if we need approval first (for ERC20 tokens)
+      if (fromAddress !== '0x0000000000000000000000000000000000000000') {
+        const hasApproval = await checkApproval(fromAddress, txRequest.to, tokenAmount);
+        if (!hasApproval) {
+          setNeedsApproval(true);
+          setLoading(false);
+          await approveToken(fromAddress, txRequest.to, tokenAmount);
+          return; // Exit here - approveToken will call executeSwap again
+        }
+      }
+      
+      showNotification('info', 'Please confirm the swap transaction in your wallet...');
       
       // Use Privy's wallet interface
       const provider = await wallet.getEthereumProvider();
@@ -280,34 +369,94 @@ export function SimpleSwapInterface() {
         }]
       });
 
-      showNotification('info', 'Transaction submitted. Waiting for confirmation...');
+      showNotification('info', 'Swap transaction submitted. Waiting for confirmation...');
       
       // Wait for transaction confirmation  
-      const receipt = await provider.request({
-        method: 'eth_getTransactionReceipt',
-        params: [txResponse]
-      });
+      let receipt = null;
+      let attempts = 0;
+      while (!receipt && attempts < 30) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        receipt = await provider.request({
+          method: 'eth_getTransactionReceipt',
+          params: [txResponse]
+        });
+        attempts++;
+      }
       
       if (receipt && receipt.status === '0x1') {
         showNotification('success', `Swap completed! Transaction: ${txResponse.slice(0, 10)}...`);
         // Reset form
         setFromAmount('');
         setToAmount('');
-        // Refresh balances
-        if (wallet.address) {
-          const updatedTokens = await getWalletBalances(wallet.address);
-          setAvailableTokens(updatedTokens);
-        }
+        setNeedsApproval(false);
+        // Show success toast with transaction link
+        const successMessage = (
+          <span>
+            Swap completed! {' '}
+            <a 
+              href={`https://testnet.monadexplorer.com/tx/${txResponse}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline hover:text-green-700 font-medium"
+              onClick={(e) => e.stopPropagation()} // Prevent notification from closing
+            >
+              View transaction
+            </a>
+          </span>
+        );
+        showNotification('success', successMessage, 5000);
+        
+        // Refresh balances after successful swap
+        setTimeout(async () => {
+          if (wallet?.address) {
+            try {
+              console.log('🔄 Refreshing balances after swap...');
+              const updatedTokens = await getWalletBalances(wallet.address);
+              const tokensWithPrices = await Promise.all(
+                updatedTokens.map(async (token) => ({
+                  ...token,
+                  usdPrice: await getTokenPrice(token.address, monUsdPrice)
+                }))
+              );
+              setAvailableTokens(tokensWithPrices);
+              
+              // Update current token references with new balances
+              const updatedFromToken = tokensWithPrices.find(t => t.address === fromToken?.address);
+              const updatedToToken = tokensWithPrices.find(t => t.address === toToken?.address);
+              if (updatedFromToken) setFromToken(updatedFromToken);
+              if (updatedToToken) setToToken(updatedToToken);
+              
+              console.log('✅ Balances refreshed successfully');
+            } catch (error) {
+              console.error('Failed to refresh balances:', error);
+              // Fallback: just fetch wallet balances without prices
+              try {
+                const basicTokens = await getWalletBalances(wallet.address);
+                setAvailableTokens(basicTokens.map(token => ({ ...token, usdPrice: token.usdPrice || 0 })));
+              } catch (fallbackError) {
+                console.error('Fallback balance refresh also failed:', fallbackError);
+              }
+            }
+          }
+        }, 2000);
       } else {
-        throw new Error('Transaction failed');
+        throw new Error(`Transaction failed - Status: ${receipt?.status || 'unknown'}`);
       }
       
     } catch (error: any) {
       console.error('Swap execution error:', error);
-      if (error.message.includes('user rejected')) {
+      const errorDetails = {
+        message: error.message,
+        code: error.code,
+        data: error.data,
+        stack: error.stack
+      };
+      console.error('Full error details:', errorDetails);
+      
+      if (error.message.includes('user rejected') || error.code === 4001) {
         showNotification('error', 'Transaction cancelled by user');
       } else {
-        showNotification('error', `Swap failed: ${error.message}`);
+        showNotification('error', `Swap failed: ${error.message} (Code: ${error.code || 'unknown'})`);
       }
     } finally {
       setLoading(false);
@@ -485,7 +634,7 @@ export function SimpleSwapInterface() {
               )}
             </div>
             <div className="ml-3 flex-1">
-              <p className="text-sm font-medium">{notification.message}</p>
+              <div className="text-sm font-medium">{notification.message}</div>
             </div>
             <button
               onClick={() => setNotification(null)}
@@ -567,7 +716,7 @@ export function SimpleSwapInterface() {
           </div>
           <div className="bg-gray-50 rounded-xl p-4">
             <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center space-x-3">
+              <div className="flex items-center space-x-3 bg-gray-200 hover:bg-gray-250 rounded-lg px-3 py-2 cursor-pointer transition-colors">
                 <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-blue-600 rounded-full flex items-center justify-center text-white font-bold">
                   {fromToken?.symbol.charAt(0) || '?'}
                 </div>
@@ -577,7 +726,7 @@ export function SimpleSwapInterface() {
                     const token = availableTokens.find(t => t.address === e.target.value);
                     setFromToken(token || null);
                   }}
-                  className="bg-transparent border-none outline-none font-semibold text-gray-900"
+                  className="bg-transparent border-none outline-none font-semibold text-gray-900 appearance-none cursor-pointer"
                 >
                   <option value="">Select token</option>
                   {(() => {
@@ -642,27 +791,49 @@ export function SimpleSwapInterface() {
                   setLastEditedField('from');
                 }}
                 placeholder={fromMode === 'usd' ? '$0' : '0'}
-                className="w-full text-right text-3xl font-semibold bg-transparent border-none outline-none placeholder-gray-400 text-gray-900 pr-16"
+                className="w-full text-right text-3xl font-semibold bg-transparent border-none outline-none placeholder-gray-400 text-gray-900"
               />
-              <button
-                onClick={() => setFromMode(fromMode === 'token' ? 'usd' : 'token')}
-                className="absolute right-0 bottom-0 p-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-                title={`Switch to ${fromMode === 'token' ? 'USD' : 'TOKEN'} mode`}
-              >
-                <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
-                </svg>
-              </button>
             </div>
             
-            {fromAmount && fromToken && (
-              <div className="text-right text-lg text-gray-500 mt-1">
-                {fromMode === 'token' 
-                  ? `$${getTokenValue(fromAmount, fromToken)}`
-                  : `${getUsdValue(fromAmount, fromToken)} ${fromToken.symbol}`
-                }
+            <div className="flex items-center justify-between mt-1">
+              <div></div>
+              <div className="flex items-center space-x-3">
+                {fromAmount && fromToken && (
+                  <div className="text-lg text-gray-500">
+                    {fromMode === 'token' 
+                      ? `$${getTokenValue(fromAmount, fromToken)}`
+                      : `${getUsdValue(fromAmount, fromToken)} ${fromToken.symbol}`
+                    }
+                  </div>
+                )}
+                <button
+                  onClick={() => {
+                    const newMode = fromMode === 'token' ? 'usd' : 'token';
+                    setFromMode(newMode);
+                    
+                    // Convert the current amount to the new mode
+                    if (fromAmount && fromToken?.usdPrice) {
+                      const currentValue = parseFloat(fromAmount);
+                      if (newMode === 'usd') {
+                        // Converting from token to USD
+                        const usdValue = currentValue * fromToken.usdPrice;
+                        setFromAmount(formatSignificantFigures(usdValue, 4));
+                      } else {
+                        // Converting from USD to token
+                        const tokenValue = currentValue / fromToken.usdPrice;
+                        setFromAmount(formatSignificantFigures(tokenValue, 4));
+                      }
+                    }
+                  }}
+                  className="p-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                  title={`Switch to ${fromMode === 'token' ? 'USD' : 'TOKEN'} mode`}
+                >
+                  <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                  </svg>
+                </button>
               </div>
-            )}
+            </div>
           </div>
         </div>
 
@@ -696,7 +867,7 @@ export function SimpleSwapInterface() {
           </div>
           <div className="bg-gray-50 rounded-xl p-4">
             <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center space-x-3">
+              <div className="flex items-center space-x-3 bg-gray-200 hover:bg-gray-250 rounded-lg px-3 py-2 cursor-pointer transition-colors">
                 <div className="w-8 h-8 bg-gradient-to-br from-green-400 to-green-600 rounded-full flex items-center justify-center text-white font-bold">
                   {toToken?.symbol.charAt(0) || '?'}
                 </div>
@@ -706,7 +877,7 @@ export function SimpleSwapInterface() {
                     const token = availableTokens.find(t => t.address === e.target.value);
                     setToToken(token || null);
                   }}
-                  className="bg-transparent border-none outline-none font-semibold text-gray-900"
+                  className="bg-transparent border-none outline-none font-semibold text-gray-900 appearance-none cursor-pointer"
                 >
                   <option value="">Select token</option>
                   {(() => {
@@ -771,40 +942,64 @@ export function SimpleSwapInterface() {
                   setLastEditedField('to');
                 }}
                 placeholder={toMode === 'usd' ? '$0' : '0'}
-                className="w-full text-right text-3xl font-semibold bg-transparent border-none outline-none placeholder-gray-400 text-gray-900 pr-16"
+                className="w-full text-right text-3xl font-semibold bg-transparent border-none outline-none placeholder-gray-400 text-gray-900"
               />
-              <button
-                onClick={() => setToMode(toMode === 'token' ? 'usd' : 'token')}
-                className="absolute right-0 bottom-0 p-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-                title={`Switch to ${toMode === 'token' ? 'USD' : 'TOKEN'} mode`}
-              >
-                <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
-                </svg>
-              </button>
             </div>
             
-            {toAmount && toToken && (
-              <div className="text-right text-lg text-gray-500 mt-1">
-                {toMode === 'token' 
-                  ? `$${getTokenValue(toAmount, toToken)}`
-                  : `${getUsdValue(toAmount, toToken)} ${toToken.symbol}`
-                }
+            <div className="flex items-center justify-between mt-1">
+              <div></div>
+              <div className="flex items-center space-x-3">
+                {toAmount && toToken && (
+                  <div className="text-lg text-gray-500">
+                    {toMode === 'token' 
+                      ? `$${getTokenValue(toAmount, toToken)}`
+                      : `${getUsdValue(toAmount, toToken)} ${toToken.symbol}`
+                    }
+                  </div>
+                )}
+                <button
+                  onClick={() => {
+                    const newMode = toMode === 'token' ? 'usd' : 'token';
+                    setToMode(newMode);
+                    
+                    // Convert the current amount to the new mode
+                    if (toAmount && toToken?.usdPrice) {
+                      const currentValue = parseFloat(toAmount);
+                      if (newMode === 'usd') {
+                        // Converting from token to USD
+                        const usdValue = currentValue * toToken.usdPrice;
+                        setToAmount(formatSignificantFigures(usdValue, 4));
+                      } else {
+                        // Converting from USD to token
+                        const tokenValue = currentValue / toToken.usdPrice;
+                        setToAmount(formatSignificantFigures(tokenValue, 4));
+                      }
+                    }
+                  }}
+                  className="p-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                  title={`Switch to ${toMode === 'token' ? 'USD' : 'TOKEN'} mode`}
+                >
+                  <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                  </svg>
+                </button>
               </div>
-            )}
+            </div>
           </div>
         </div>
 
         {/* Swap Button */}
         <button
-          disabled={!fromToken || !toToken || !fromAmount || loading || quoteLoading}
+          disabled={!fromToken || !toToken || !fromAmount || loading || quoteLoading || approving}
           onClick={executeSwap}
           className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-semibold py-4 px-6 rounded-2xl transition-colors"
         >
-          {loading ? 'Processing...' : 
+          {approving ? 'Approving...' :
+           loading ? 'Processing...' : 
            quoteLoading ? 'Getting quote...' :
            !fromToken || !toToken ? 'Select tokens' : 
-           !fromAmount ? 'Enter amount' : 'Swap'}
+           !fromAmount ? 'Enter amount' : 
+           needsApproval ? 'Approve & Swap' : 'Swap'}
         </button>
 
         {/* Connected Wallet Info */}

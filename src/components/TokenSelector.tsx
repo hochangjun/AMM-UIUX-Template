@@ -1,23 +1,53 @@
 'use client';
 
+/**
+ * Enhanced Token Selector Component
+ * 
+ * This component implements modern token selection UX including:
+ * - Search functionality (by name, symbol, or address)
+ * - Click-to-copy contract addresses
+ * - Verification badges for trusted tokens
+ * - Balance display with USD values
+ * - Context-aware sorting (different for 'from' vs 'to' modes)
+ * 
+ * Teams can customize by:
+ * 1. Modifying the search logic
+ * 2. Adding custom token icons/images
+ * 3. Implementing different verification systems
+ * 4. Customizing the dropdown styling
+ */
+
 import { useState, useRef, useEffect } from 'react';
 
+/**
+ * Token Interface - Should match your main Token interface
+ */
 interface Token {
-  address: string;
-  symbol: string;
-  name: string;
-  decimals: number;
-  balance?: string;
-  usdPrice?: number;
+  address: string;    // Contract address
+  symbol: string;     // Token symbol (e.g., 'ETH')
+  name: string;       // Full name (e.g., 'Ethereum')
+  decimals: number;   // Decimal places
+  balance?: string;   // User's balance (formatted)
+  usdPrice?: number;  // USD price per token
 }
 
+/**
+ * TokenSelector Props
+ * 
+ * @param tokens - Array of available tokens
+ * @param selectedToken - Currently selected token
+ * @param onTokenSelect - Callback when token is selected
+ * @param verifiedTokenAddresses - Set of verified token addresses
+ * @param placeholder - Placeholder text when no token selected
+ * @param mode - 'from' or 'to' for context-aware sorting
+ */
 interface TokenSelectorProps {
   tokens: Token[];
   selectedToken: Token | null;
   onTokenSelect: (token: Token) => void;
   verifiedTokenAddresses: Set<string>;
   placeholder?: string;
-  mode?: 'from' | 'to';
+  mode?: 'from' | 'to';  // Context-aware sorting
 }
 
 export function TokenSelector({ 
@@ -71,31 +101,39 @@ export function TokenSelector({
     );
   });
 
-  // Separate and sort tokens
+  /**
+   * CONTEXT-AWARE TOKEN SORTING
+   * 
+   * This implements smart sorting based on user intent:
+   * - 'from' mode: Prioritize tokens user owns (sorted by USD value)
+   * - 'to' mode: Prioritize popular destination tokens (stablecoins, native token)
+   * 
+   * Teams should customize the logic based on their token ecosystem.
+   */
   const sortTokens = (tokenList: Token[]) => {
     return tokenList.sort((a, b) => {
-      // For 'to' mode, prioritize stablecoins and native token
+      // FOR 'TO' MODE: Prioritize common destination tokens
       if (mode === 'to') {
-        const isAStable = ['USDC', 'USDT', 'DAI'].includes(a.symbol);
+        const isAStable = ['USDC', 'USDT', 'DAI'].includes(a.symbol);  // Add your stablecoins
         const isBStable = ['USDC', 'USDT', 'DAI'].includes(b.symbol);
-        const isANative = a.symbol === 'MON';
+        const isANative = a.symbol === 'MON';  // Replace 'MON' with your native token
         const isBNative = b.symbol === 'MON';
         
-        if (isANative) return -1;
+        if (isANative) return -1;      // Native token first
         if (isBNative) return 1;
-        if (isAStable && !isBStable) return -1;
+        if (isAStable && !isBStable) return -1;  // Stablecoins second
         if (!isAStable && isBStable) return 1;
       }
       
-      // Then sort by balance (USD value)
+      // FOR BOTH MODES: Sort by balance value (users want to see what they own)
       const aValue = parseFloat(a.balance || '0') * (a.usdPrice || 0);
       const bValue = parseFloat(b.balance || '0') * (b.usdPrice || 0);
       
       if (aValue !== bValue) {
-        return bValue - aValue;
+        return bValue - aValue;  // Highest value first
       }
       
-      // Finally sort alphabetically
+      // FALLBACK: Alphabetical sorting
       return a.symbol.localeCompare(b.symbol);
     });
   };

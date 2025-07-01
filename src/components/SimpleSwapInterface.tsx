@@ -1,22 +1,58 @@
 'use client';
 
+/**
+ * AMM DEX Swap Interface - Modern UI/UX Template
+ * 
+ * This component implements all the modern AMM UI/UX best practices including:
+ * - USD/Token input toggles for user-friendly pricing
+ * - Balance shortcuts (25%, 50%, MAX) for quick selection
+ * - Enhanced token selector with search and copy addresses
+ * - Live quote refresh with countdown timer
+ * - Reactive slippage settings based on price impact
+ * - Shareable swap URLs via query parameters
+ * - Professional success modals and error handling
+ * 
+ * Teams can adapt this template by:
+ * 1. Replacing Privy wallet integration with their preferred wallet library
+ * 2. Updating API endpoints to match their backend
+ * 3. Modifying token list sources and verification logic
+ * 4. Customizing styling to match their brand
+ */
+
 import { useState, useEffect } from 'react';
-import { usePrivy, useWallets } from '@privy-io/react-auth';
+import { usePrivy, useWallets } from '@privy-io/react-auth'; // Replace with your wallet library
 import { getTokenBalanceFromChain } from '@/utils/getTokenBalance';
 import { TokenSelector } from './TokenSelector';
 import { useSearchParams } from 'next/navigation';
 
-// Simple token interface
+/**
+ * Token Interface
+ * 
+ * Standard token object structure used throughout the application.
+ * Teams should modify this to match their token data structure.
+ */
 interface Token {
- address: string;
- symbol: string;
- name: string;
- decimals: number;
- balance?: string;
- usdPrice?: number;
+ address: string;    // Contract address (use '0x0000...' for native token)
+ symbol: string;     // Token symbol (e.g., 'ETH', 'USDC')
+ name: string;       // Full token name (e.g., 'Ethereum', 'USD Coin')
+ decimals: number;   // Token decimal places (usually 18 for ERC20)
+ balance?: string;   // User's token balance (formatted string)
+ usdPrice?: number;  // USD price per token (for USD toggle feature)
 }
 
-// Simple API functions for Monorail using proxy
+/**
+ * PRICE FETCHING FUNCTIONS
+ * 
+ * These functions handle price data from your DEX API.
+ * Teams should replace these with their own price endpoints.
+ */
+
+/**
+ * Get native token USD price
+ * 
+ * Replace this function to fetch your native token price from your API.
+ * The example uses Monorail API - adapt the endpoint and response parsing.
+ */
 async function getMonUsdPrice(): Promise<number> {
  // Check cache first
  const cachedPrice = getCachedPrice('MON_USD_PRICE');
@@ -42,13 +78,26 @@ async function getMonUsdPrice(): Promise<number> {
  }
 }
 
-// Cache helpers for token prices
-const PRICE_CACHE_KEY = 'monorail_token_prices';
+/**
+ * CACHING CONFIGURATION
+ * 
+ * Caching improves performance and reduces API calls.
+ * Teams can adjust cache durations based on their needs:
+ * - Price cache: 5 minutes (prices change slowly)
+ * - Balance cache: 30 seconds (balances change frequently)
+ */
+const PRICE_CACHE_KEY = 'monorail_token_prices';    // Update key prefix for your DEX
 const PRICE_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
-const BALANCE_CACHE_KEY = 'monorail_wallet_balances';
+const BALANCE_CACHE_KEY = 'monorail_wallet_balances'; // Update key prefix for your DEX
 const BALANCE_CACHE_DURATION = 30 * 1000; // 30 seconds
 
+/**
+ * Get cached token price
+ * 
+ * This caching system prevents excessive API calls for price data.
+ * Teams can keep this implementation as-is.
+ */
 function getCachedPrice(address: string): number | null {
  try {
   const cached = localStorage.getItem(PRICE_CACHE_KEY);
@@ -69,6 +118,12 @@ function getCachedPrice(address: string): number | null {
  }
 }
 
+/**
+ * Cache token price with timestamp
+ * 
+ * Stores price data in localStorage with expiration.
+ * Teams can keep this implementation as-is.
+ */
 function setCachedPrice(address: string, price: number): void {
  try {
   const cached = localStorage.getItem(PRICE_CACHE_KEY);
@@ -121,6 +176,14 @@ function setCachedBalances(walletAddress: string, balances: Token[]): void {
  }
 }
 
+/**
+ * Get token price in USD
+ * 
+ * Fetches token price from your DEX API. Teams should:
+ * 1. Replace the API endpoint with your price endpoint
+ * 2. Update the response parsing logic
+ * 3. Modify the native token address check ('0x0000...')
+ */
 async function getTokenPrice(address: string, monUsdPrice: number): Promise<number> {
  if (address === '0x0000000000000000000000000000000000000000') {
   return monUsdPrice; // MON price
@@ -149,6 +212,14 @@ async function getTokenPrice(address: string, monUsdPrice: number): Promise<numb
  }
 }
 
+/**
+ * Get wallet token balances
+ * 
+ * Fetches user's token balances from your API. Teams should:
+ * 1. Replace API endpoints with your balance endpoints
+ * 2. Update response parsing to match your API structure
+ * 3. Modify fallback token list for your supported tokens
+ */
 async function getWalletBalances(walletAddress: string): Promise<Token[]> {
  // Check cache first
  const cachedBalances = getCachedBalances(walletAddress);
@@ -246,38 +317,64 @@ async function getWalletBalances(walletAddress: string): Promise<Token[]> {
  }
 }
 
+/**
+ * Main Swap Interface Component
+ * 
+ * This is the primary component that implements all modern AMM UI/UX features.
+ * Teams can use this as a reference or starting point for their own swap interface.
+ */
 export function SimpleSwapInterface() {
+ // WALLET INTEGRATION - Replace with your wallet library
  const { ready, authenticated, login, logout } = usePrivy();
  const { wallets } = useWallets();
  const searchParams = useSearchParams();
  
- const [availableTokens, setAvailableTokens] = useState<Token[]>([]);
- const [verifiedTokenAddresses, setVerifiedTokenAddresses] = useState<Set<string>>(new Set());
- const [fromToken, setFromToken] = useState<Token | null>(null);
- const [toToken, setToToken] = useState<Token | null>(null);
- const [fromAmount, setFromAmount] = useState('');
- const [toAmount, setToAmount] = useState('');
- const [fromMode, setFromMode] = useState<'token' | 'usd'>('token');
- const [toMode, setToMode] = useState<'token' | 'usd'>('token');
- const [monUsdPrice, setMonUsdPrice] = useState<number>(1.0);
- const [loading, setLoading] = useState(false);
- const [mounted, setMounted] = useState(false);
+ // =============================================================================
+ // STATE VARIABLES - All the component state organized by feature
+ // =============================================================================
+ 
+ // CORE TOKEN & SWAP STATE
+ const [availableTokens, setAvailableTokens] = useState<Token[]>([]);           // All available tokens
+ const [verifiedTokenAddresses, setVerifiedTokenAddresses] = useState<Set<string>>(new Set()); // Verified token addresses
+ const [fromToken, setFromToken] = useState<Token | null>(null);               // Selected input token
+ const [toToken, setToToken] = useState<Token | null>(null);                   // Selected output token
+ const [fromAmount, setFromAmount] = useState('');                             // Input amount (as string)
+ const [toAmount, setToAmount] = useState('');                                 // Output amount (as string)
+ 
+ // USD TOGGLE FEATURE - Key UX improvement: let users think in dollars
+ const [fromMode, setFromMode] = useState<'token' | 'usd'>('token');           // Input mode: 'token' or 'usd'
+ const [toMode, setToMode] = useState<'token' | 'usd'>('token');               // Output mode: 'token' or 'usd'
+ 
+ // PRICING & QUOTE DATA
+ const [monUsdPrice, setMonUsdPrice] = useState<number>(1.0);                  // Native token price in USD
+ const [priceImpact, setPriceImpact] = useState<number | null>(null);          // Trade price impact %
+ const [exchangeRate, setExchangeRate] = useState<string>('');                 // Exchange rate display (e.g., "1 ETH = 3,000 USDC")
+ const [estimatedGas, setEstimatedGas] = useState<string>('');                 // Gas cost estimate
+ const [tradingFee, setTradingFee] = useState<number>(0);                      // DEX trading fee %
+ 
+ // LIVE QUOTES - Auto-refresh for accuracy
+ const [quoteTimer, setQuoteTimer] = useState(15);                             // Countdown timer (seconds)
+ const [lastQuoteTime, setLastQuoteTime] = useState<number>(Date.now());       // Last quote timestamp
+ const [quoteLoading, setQuoteLoading] = useState(false);                      // Quote loading state
+ const [lastEditedField, setLastEditedField] = useState<'from' | 'to'>('from'); // Track user's last edit
+ 
+ // SLIPPAGE MANAGEMENT - Reactive based on price impact
+ const [slippageTolerance, setSlippageTolerance] = useState<number>(0.5);      // User's slippage tolerance %
+ const [customSlippage, setCustomSlippage] = useState<string>('');             // Custom slippage input
+ 
+ // TRANSACTION STATE
+ const [approving, setApproving] = useState(false);                            // Token approval in progress
+ const [needsApproval, setNeedsApproval] = useState(false);                    // Token approval required
+ 
+ // UI STATE
+ const [loading, setLoading] = useState(false);                                // General loading state
+ const [mounted, setMounted] = useState(false);                                // Next.js hydration fix
+ const [showQuoteDetails, setShowQuoteDetails] = useState(false);              // Quote details expanded
+ const [showSuccessModal, setShowSuccessModal] = useState(false);              // Success modal visible
+ const [showSettingsModal, setShowSettingsModal] = useState(false);            // Settings modal visible
+ 
+ // NOTIFICATION SYSTEM - User feedback
  const [notification, setNotification] = useState<{type: 'success' | 'error' | 'info', message: string | React.ReactNode} | null>(null);
- const [quoteLoading, setQuoteLoading] = useState(false);
- const [lastEditedField, setLastEditedField] = useState<'from' | 'to'>('from');
- const [approving, setApproving] = useState(false);
- const [needsApproval, setNeedsApproval] = useState(false);
- const [quoteTimer, setQuoteTimer] = useState(15); // 15 seconds default
- const [lastQuoteTime, setLastQuoteTime] = useState<number>(Date.now());
- const [priceImpact, setPriceImpact] = useState<number | null>(null);
- const [exchangeRate, setExchangeRate] = useState<string>('');
- const [showQuoteDetails, setShowQuoteDetails] = useState(false);
- const [estimatedGas, setEstimatedGas] = useState<string>('');
- const [tradingFee, setTradingFee] = useState<number>(0);
- const [slippageTolerance, setSlippageTolerance] = useState<number>(0.5);
- const [customSlippage, setCustomSlippage] = useState<string>('');
- const [showSuccessModal, setShowSuccessModal] = useState(false);
- const [showSettingsModal, setShowSettingsModal] = useState(false);
  const [swapResult, setSwapResult] = useState<{
   fromToken: Token;
   toToken: Token;
@@ -288,16 +385,41 @@ export function SimpleSwapInterface() {
   gasUsed?: string;
  } | null>(null);
 
- const wallet = wallets[0];
- const [lastWalletAddress, setLastWalletAddress] = useState<string | null>(null);
+ // WALLET CONNECTION - Replace with your wallet integration
+ const wallet = wallets[0];  // Primary connected wallet
+ const [lastWalletAddress, setLastWalletAddress] = useState<string | null>(null); // For reactive wallet changes
 
- // Notification helper
+ // =============================================================================
+ // HELPER FUNCTIONS - Core functionality that teams can adapt
+ // =============================================================================
+
+ /**
+  * NOTIFICATION SYSTEM
+  * 
+  * Shows user feedback messages. Teams can:
+  * 1. Replace with their preferred toast/notification library
+  * 2. Customize styling and positioning
+  * 3. Add sound effects or animations
+  */
  const showNotification = (type: 'success' | 'error' | 'info', message: string | React.ReactNode) => {
   setNotification({ type, message });
   // Notifications stay visible until manually closed for debugging
  };
 
- // Quote fetching function
+ /**
+  * QUOTE FETCHING - Core DEX functionality
+  * 
+  * Fetches swap quotes from your DEX API. Teams should:
+  * 1. Replace the API endpoint (/api/pathfinder) with your quote endpoint
+  * 2. Update request parameters to match your API
+  * 3. Modify response parsing for your data structure
+  * 4. Adjust price impact calculation logic
+  * 
+  * @param fromToken - Token being sold
+  * @param toToken - Token being bought
+  * @param amount - Amount to swap (in human-readable format)
+  * @param isFromAmount - Whether amount is for input (true) or output (false)
+  */
  const fetchQuote = async (fromToken: Token, toToken: Token, amount: string, isFromAmount: boolean = true) => {
   if (!amount || parseFloat(amount) <= 0) return;
   
@@ -593,7 +715,21 @@ export function SimpleSwapInterface() {
   }
  };
 
- // Swap execution function
+ /**
+  * SWAP EXECUTION - Main transaction function
+  * 
+  * Executes the actual swap transaction. Teams should:
+  * 1. Replace API endpoints with your swap execution endpoints
+  * 2. Update transaction signing to match your wallet integration
+  * 3. Modify approval logic for your token contracts
+  * 4. Customize success/error handling
+  * 
+  * This function handles:
+  * - Token approval (if needed)
+  * - Transaction signing
+  * - Transaction monitoring
+  * - Success/error feedback
+  */
  const executeSwap = async () => {
   if (!fromToken || !toToken || !fromAmount || !wallet?.address) {
    showNotification('error', (
@@ -1116,7 +1252,18 @@ export function SimpleSwapInterface() {
   window.history.replaceState({}, '', newUrl);
  }, [fromToken, toToken, fromAmount, fromMode, mounted]);
 
- // USD conversion helpers
+ // =============================================================================
+ // UTILITY FUNCTIONS - Helper functions for calculations and formatting
+ // =============================================================================
+
+ /**
+  * USD CONVERSION HELPERS
+  * 
+  * These functions power the USD toggle feature, allowing users to think in dollars.
+  * Teams can customize the precision and formatting.
+  */
+ 
+ // Convert token amount to USD value
  const getTokenValue = (amount: string, token: Token | null): string => {
   if (!amount || !token?.usdPrice) return '';
   const numAmount = parseFloat(amount);
@@ -1124,6 +1271,7 @@ export function SimpleSwapInterface() {
   return (numAmount * token.usdPrice).toFixed(2);
  };
 
+ // Convert USD value to token amount
  const getUsdValue = (amount: string, token: Token | null): string => {
   if (!amount || !token?.usdPrice) return '';
   const numAmount = parseFloat(amount);
@@ -1131,7 +1279,12 @@ export function SimpleSwapInterface() {
   return formatSignificantFigures(numAmount / token.usdPrice, 4);
  };
 
- // Format number to significant figures
+ /**
+  * NUMBER FORMATTING
+  * 
+  * Formats numbers to significant figures for better UX.
+  * Prevents showing too many decimal places.
+  */
  const formatSignificantFigures = (num: number, sigFigs: number): string => {
   if (num === 0) return '0';
   const magnitude = Math.floor(Math.log10(Math.abs(num)));
@@ -1147,9 +1300,13 @@ export function SimpleSwapInterface() {
   );
  }
 
+ // =============================================================================
+ // MAIN UI RENDER - The actual swap interface
+ // =============================================================================
+ 
  return (
   <div className="max-w-lg mx-auto p-4">
-   {/* Notification */}
+   {/* NOTIFICATION SYSTEM - User feedback */}
    {notification && (
     <div className={`mb-4 p-4 rounded-lg border-l-4 ${
      notification.type === 'success' ? 'bg-green-50 border-green-400 text-green-800' :
@@ -1190,7 +1347,7 @@ export function SimpleSwapInterface() {
    )}
    
    <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-lg ">
-    {/* Header */}
+    {/* HEADER - Title and action buttons */}
     <div className="flex items-center justify-between mb-6">
      <h1 className="text-2xl font-bold text-gray-900 ">Swap</h1>
      <div className="flex items-center space-x-3">
@@ -1261,7 +1418,7 @@ export function SimpleSwapInterface() {
      </div>
     )}
 
-    {/* From Token */}
+    {/* FROM TOKEN SECTION - Input token selection and amount */}
     <div className="mb-4">
      <div className="flex items-center justify-between mb-2">
       <span className="text-sm font-medium text-gray-600 ">You pay</span>
@@ -1379,7 +1536,7 @@ export function SimpleSwapInterface() {
      </div>
     </div>
 
-    {/* Swap Arrow */}
+    {/* SWAP DIRECTION BUTTON - Allows users to flip tokens */}
     <div className="flex justify-center -my-2 relative z-10">
      <button
       type="button"

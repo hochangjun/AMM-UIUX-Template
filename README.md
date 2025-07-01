@@ -1,163 +1,152 @@
-# Monorail DEX Interface
+# AMM UI/UX Template
 
-A modern, professional DEX interface for Monad testnet built with Next.js 15, React 19, and Tailwind CSS. Integrates with Monorail's Pathfinder API for optimal swap routing and Privy for seamless wallet connections.
+A complete reference implementation of modern AMM DEX user interface patterns. This template implements all the UI/UX best practices from the comprehensive [AMM DEX UI/UX guide](https://twitter.com/hochangjun), designed to help AMM teams build world-class user experiences.
 
-## ✨ Features
+## 🌟 **Why This Template?**
 
-- **🔄 Token Swapping**: Swap between MON and verified ERC-20 tokens
-- **💰 Real-time Pricing**: Live price feeds and USD conversion  
-- **🔗 Wallet Integration**: Seamless connection via Privy
-- **⚡ Smart Routing**: Powered by Monorail's Pathfinder API
-- **🛡️ Secure Approvals**: Exact-amount token approvals for enhanced security
-- **📱 Mobile Responsive**: Optimized for mobile DeFi usage
-- **✨ Auto-execution**: Automatic swap execution after approvals
-- **🎯 Professional UI**: Clean, modern interface with in-app notifications
+Most AMM DEXes lack basic UI/UX features that users expect. This template provides a production-ready implementation of:
 
-## 🚀 Live Demo
+- **USD Toggle** - Let users think in dollars, not just tokens
+- **Smart Token Lists** - Wallet-first sorting with verification badges  
+- **Live Quotes** - Auto-refresh with countdown timer
+- **Reactive Slippage** - Dynamic warnings based on price impact
+- **Enhanced Input Fields** - Balance shortcuts and bidirectional calculation
+- **Professional Error Handling** - Actionable error messages with solutions
+- **Shareable Swaps** - Deep-linkable URLs for social sharing
 
-[View Live Demo](https://monorailtest.vercel.app)
+## 🎯 **Perfect For**
 
-## 🛠 Tech Stack
+- **AMM Teams** building new DEX interfaces
+- **Frontend Developers** wanting modern DeFi UX patterns
+- **Product Managers** defining DEX feature requirements
+- **Designers** understanding DeFi interaction patterns
 
-- **Frontend**: Next.js 15 with React 19
-- **Styling**: Tailwind CSS 3
-- **Wallet**: Privy for Web3 authentication
-- **API**: Monorail Data API & Pathfinder for swaps
-- **Network**: Monad Testnet
-- **Deployment**: Vercel
+## 🚀 **Quick Start**
 
-## 🏁 Getting Started
-
-### Prerequisites
-
-- Node.js 18+ 
-- npm or yarn
-- A Privy account ([sign up here](https://privy.io))
-
-### Installation
-
-1. **Clone the repository:**
 ```bash
-git clone https://github.com/hochangjun/monorailtest.git
-cd monorailtest
-```
+# Clone the template
+git clone https://github.com/hochangjun/AMM-UIUX-Template.git
+cd AMM-UIUX-Template
 
-2. **Install dependencies:**
-```bash
+# Install dependencies
 npm install
-```
 
-3. **Set up environment variables:**
-```bash
-cp .env.example .env.local
-```
-
-Add your Privy App ID to `.env.local`:
-```env
-NEXT_PUBLIC_PRIVY_APP_ID=your_privy_app_id_here
-```
-
-4. **Run the development server:**
-```bash
+# Start development server
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) to view the application.
+Visit `http://localhost:3000` to see the template in action.
 
-## 🔧 Environment Variables
+## 📋 **What's Included**
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `NEXT_PUBLIC_PRIVY_APP_ID` | Your Privy application ID | Yes |
+### **Core Components**
+- `SimpleSwapInterface.tsx` - Main swap component with all features
+- `TokenSelector.tsx` - Enhanced token selection dropdown
 
-## 🌐 API Endpoints
+### **Key Features**
+✅ USD/Token input toggles  
+✅ Balance shortcuts (25%, 50%, MAX)  
+✅ Enhanced token search with copy addresses  
+✅ Context-aware token sorting  
+✅ Live quote refresh with countdown  
+✅ Expandable fee breakdown  
+✅ Reactive slippage management  
+✅ Shareable swap URLs  
+✅ Professional success modals  
+✅ Smart error messages  
+✅ Reactive wallet connection  
 
-The app uses proxy API routes to avoid CORS issues:
+### **Documentation**
+- **Extensive inline comments** explaining every feature
+- **Implementation guide** for customization
+- **Integration examples** for common scenarios
 
-- `/api/monorail`: Proxies requests to Monorail Data API
-- `/api/pathfinder`: Proxies requests to Pathfinder for swap quotes
+## 🔧 **Easy to Customize**
 
-## 📱 Usage
+The template is designed for easy adaptation:
 
-1. **Connect Wallet**: Click "Connect Wallet" and choose your preferred wallet
-2. **Select Tokens**: Choose tokens to swap from the dropdowns (defaults to MON → USDC)
-3. **Enter Amount**: Input the amount you want to swap
-4. **Review**: Check the quote and conversion rates
-5. **Swap**: Click "Swap" and approve transactions in your wallet
-6. **Auto-execution**: For ERC-20 tokens, approve once and the swap executes automatically
+### **Replace Wallet Integration**
+```typescript
+// Current: Privy
+import { usePrivy, useWallets } from '@privy-io/react-auth';
 
-## 🚀 Deployment
-
-### Vercel (Recommended)
-
-1. **Push to GitHub:**
-```bash
-git add .
-git commit -m "Initial commit"
-git branch -M main
-git remote add origin https://github.com/hochangjun/monorailtest.git
-git push -u origin main
+// Replace with your wallet library
+import { useWallet } from '@your-wallet-lib';
 ```
 
-2. **Deploy to Vercel:**
-   - Go to [vercel.com](https://vercel.com)
-   - Import your GitHub repository
-   - Add your `NEXT_PUBLIC_PRIVY_APP_ID` environment variable
-   - Deploy!
-
-3. **Environment Variables on Vercel:**
-   - Go to your project settings
-   - Add `NEXT_PUBLIC_PRIVY_APP_ID` with your Privy App ID
-
-### Manual Deployment
-
-```bash
-npm run build
-npm run start
+### **Update API Endpoints**
+```typescript
+// Replace these functions with your API calls:
+- getMonUsdPrice()     // Your native token price
+- getTokenPrice()      // Your token prices  
+- getWalletBalances()  // Your balance endpoint
+- fetchQuote()         // Your routing/quotes
 ```
 
-## 🏗 Project Structure
+### **Customize Styling**
+Built with Tailwind CSS for easy theming and customization.
 
-```
-├── src/
-│   ├── app/
-│   │   ├── api/           # API proxy routes
-│   │   ├── layout.tsx     # Root layout
-│   │   ├── page.tsx       # Main page
-│   │   └── providers.tsx  # Privy provider setup
-│   └── components/
-│       └── SimpleSwapInterface.tsx  # Main swap component
-├── public/                # Static assets
-├── package.json
-├── vercel.json           # Vercel configuration
-└── .env.example          # Environment variables template
-```
+## 📖 **Implementation Guide**
 
-## 🔗 Links
+See [IMPLEMENTATION_GUIDE.md](./IMPLEMENTATION_GUIDE.md) for detailed instructions on:
 
-- **Monorail Discord**: [discord.monorail.xyz](https://discord.monorail.xyz)
-- **Monorail Data API**: [testnet-api.monorail.xyz](https://testnet-api.monorail.xyz/v1/swagger)
-- **Pathfinder API**: [testnet-pathfinder.monorail.xyz](https://testnet-pathfinder.monorail.xyz/v3/swagger)
-- **Privy**: [privy.io](https://privy.io)
+- **Phase-by-phase implementation** approach
+- **API integration** examples
+- **Customization** guidelines  
+- **Testing** recommendations
+- **Best practices** for production
 
-## 🤝 Contributing
+## 🎨 **Live Demo**
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/amazing-feature`
-3. Commit your changes: `git commit -m 'Add amazing feature'`
-4. Push to the branch: `git push origin feature/amazing-feature`
-5. Open a Pull Request
+The template includes a working demo using:
+- **Monad Testnet** for blockchain interaction
+- **Monorail API** for quotes and prices
+- **Privy** for wallet connection
 
-## 📝 License
+*Teams should replace these with their own infrastructure.*
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+## 💡 **Key UX Insights**
 
-## 🆘 Support
+This template implements research-backed UX patterns:
 
-- Open an issue for bugs or feature requests
-- Join the [Monorail Discord](https://discord.monorail.xyz) for API support
-- Check the [Privy docs](https://docs.privy.io) for wallet integration help
+1. **Users think in dollars** - USD toggle reduces cognitive load
+2. **Context matters** - Different token lists for buying vs selling
+3. **Transparency builds trust** - Clear fee breakdown and price impact
+4. **Errors should educate** - Actionable error messages with solutions
+5. **Speed is critical** - Live quotes with visual countdown
+6. **Mobile-first** - Touch-friendly interactions and responsive design
+
+## 🏗️ **Built for Production**
+
+- **TypeScript** for type safety
+- **Comprehensive error handling** for edge cases
+- **Performance optimized** with caching and debouncing
+- **Accessibility considered** with proper ARIA labels
+- **Mobile responsive** design patterns
+
+## 🤝 **Community**
+
+This template is a community resource. Contributions welcome:
+
+- **Bug fixes** and improvements
+- **New UX patterns** from your DEX experience
+- **Integration guides** for popular libraries
+- **Performance optimizations**
+
+## 📄 **License**
+
+MIT License - Use freely in your projects.
+
+## 🙏 **Acknowledgments**
+
+Built from real-world experience and user feedback from:
+- AMM development teams
+- DeFi power users  
+- Frontend developers
+- UX researchers
 
 ---
 
-Built with ❤️ for the Monad ecosystem# AMM-UIUX-Template
+**Give your users the modern DeFi experience they deserve** ✨
+
+*This template represents months of research into what makes DEX interfaces intuitive, trustworthy, and professional. Use it to build better AMMs.*

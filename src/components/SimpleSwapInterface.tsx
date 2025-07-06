@@ -199,11 +199,16 @@ async function getTokenPrice(address: string, monUsdPrice: number): Promise<numb
   const response = await fetch(`/api/monorail?endpoint=/token/${address}`);
   if (!response.ok) return 0;
   const data = await response.json();
-  const price = (data.mon_per_token || 0) * monUsdPrice;
+  
+  // Fix: mon_per_token means "how many MON to buy 1 token"
+  // So if USDC costs 0.5 MON, and MON is $2, then USDC = $1
+  // Formula: price_in_usd = (1 / mon_per_token) * monUsdPrice
+  const monPerToken = data.mon_per_token || 0;
+  const price = monPerToken > 0 ? monUsdPrice / monPerToken : 0;
   
   // Cache the result
   setCachedPrice(address, price);
-  console.log(`🌐 Fetched and cached price for ${address}: ${price}`);
+  console.log(`🌐 Fetched and cached price for ${address}: ${price} (${monPerToken} MON per token)`);
   
   return price;
  } catch (error) {
@@ -403,7 +408,12 @@ export function SimpleSwapInterface() {
   */
  const showNotification = (type: 'success' | 'error' | 'info', message: string | React.ReactNode) => {
   setNotification({ type, message });
-  // Notifications stay visible until manually closed for debugging
+  
+  // Auto-dismiss notifications after 5 seconds for info/success, 10 seconds for errors
+  const dismissTime = type === 'error' ? 10000 : 5000;
+  setTimeout(() => {
+   setNotification(prev => prev?.message === message ? null : prev);
+  }, dismissTime);
  };
 
  /**
@@ -812,6 +822,9 @@ export function SimpleSwapInterface() {
    }
    
    if (receipt && receipt.status === '0x1') {
+    // Clear the waiting notification
+    setNotification(null);
+    
     // Prepare swap result data
     const result = {
      fromToken: fromToken!,

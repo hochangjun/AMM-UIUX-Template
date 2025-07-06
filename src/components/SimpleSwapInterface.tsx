@@ -200,6 +200,16 @@ async function getTokenPrice(address: string, monUsdPrice: number): Promise<numb
   if (!response.ok) return 0;
   const data = await response.json();
   
+  console.log(`🔍 Raw API data for ${address}:`, data);
+  
+  // Special handling for USDC - should be ~$1
+  if (address.toLowerCase() === '0xf817257fed379853cde0fa4f97ab987181b1e5ea') {
+   const price = 1.0; // Force USDC to $1
+   setCachedPrice(address, price);
+   console.log(`💵 USDC price forced to: $${price}`);
+   return price;
+  }
+  
   // Fix: mon_per_token means "how many MON to buy 1 token"
   // So if USDC costs 0.5 MON, and MON is $2, then USDC = $1
   // Formula: price_in_usd = (1 / mon_per_token) * monUsdPrice
@@ -208,7 +218,7 @@ async function getTokenPrice(address: string, monUsdPrice: number): Promise<numb
   
   // Cache the result
   setCachedPrice(address, price);
-  console.log(`🌐 Fetched and cached price for ${address}: ${price} (${monPerToken} MON per token)`);
+  console.log(`🌐 Fetched and cached price for ${address}: ${price} (${monPerToken} MON per token, MON price: ${monUsdPrice})`);
   
   return price;
  } catch (error) {
@@ -876,39 +886,53 @@ export function SimpleSwapInterface() {
     setPriceImpact(null);
     setExchangeRate('');
     
-    // Refresh balances after successful swap
-    setTimeout(async () => {
-     if (wallet?.address) {
+    // Force clear balance cache and refresh immediately
+    if (wallet?.address) {
+     // Clear cached balances to force fresh data
+     localStorage.removeItem(BALANCE_CACHE_KEY);
+     
+     console.log('🔄 Force refreshing balances after swap...');
+     
+     const refreshBalances = async () => {
       try {
-       console.log('🔄 Refreshing balances after swap...');
-       const updatedTokens = await getWalletBalances(wallet.address);
-       const tokensWithPrices = await Promise.all(
-        updatedTokens.map(async (token) => ({
-         ...token,
-         usdPrice: await getTokenPrice(token.address, monUsdPrice)
-        }))
-       );
-       setAvailableTokens(tokensWithPrices);
+       // Use blockchain method for immediate fresh data
+       const provider = await wallet.getEthereumProvider();
+       const freshTokens = [...availableTokens];
+       
+       // Update balances for each token from blockchain
+       for (const token of freshTokens) {
+        try {
+         const balance = await getTokenBalanceFromChain(
+          provider,
+          token.address,
+          wallet.address,
+          token.decimals
+         );
+         token.balance = balance;
+         console.log(`💰 Updated ${token.symbol} balance: ${balance}`);
+        } catch (err) {
+         console.warn(`Failed to update ${token.symbol} balance:`, err);
+        }
+       }
+       
+       setAvailableTokens([...freshTokens]);
        
        // Update current token references with new balances
-       const updatedFromToken = tokensWithPrices.find(t => t.address === fromToken?.address);
-       const updatedToToken = tokensWithPrices.find(t => t.address === toToken?.address);
+       const updatedFromToken = freshTokens.find(t => t.address === fromToken?.address);
+       const updatedToToken = freshTokens.find(t => t.address === toToken?.address);
        if (updatedFromToken) setFromToken(updatedFromToken);
        if (updatedToToken) setToToken(updatedToToken);
        
-       console.log('✅ Balances refreshed successfully');
+       console.log('✅ Balances force refreshed successfully');
       } catch (error) {
-       console.error('Failed to refresh balances:', error);
-       // Fallback: just fetch wallet balances without prices
-       try {
-        const basicTokens = await getWalletBalances(wallet.address);
-        setAvailableTokens(basicTokens.map(token => ({ ...token, usdPrice: token.usdPrice || 0 })));
-       } catch (fallbackError) {
-        console.error('Fallback balance refresh also failed:', fallbackError);
-       }
+       console.error('Failed to force refresh balances:', error);
       }
-     }
-    }, 0);
+     };
+     
+     // Refresh immediately and again after 2 seconds for network propagation
+     refreshBalances();
+     setTimeout(refreshBalances, 2000);
+    }
    } else {
     throw new Error(`Transaction failed - Status: ${receipt?.status || 'unknown'}`);
    }

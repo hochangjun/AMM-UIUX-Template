@@ -1292,13 +1292,10 @@ export function SimpleSwapInterface() {
   return (Math.round(num * factor) / factor).toString();
  };
 
- if (!ready || !mounted) {
-  return (
-   <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-    <div className="text-gray-600 text-xl">Loading...</div>
-   </div>
-  );
- }
+ // UX IMPROVEMENT: Removed blocking loading state for instant interface rendering
+ // Instead of showing "Loading..." for a split second, we let the interface render 
+ // immediately and handle wallet/hydration states gracefully within the UI components.
+ // This eliminates the jarring flash of loading state that makes the app feel slower.
 
  // =============================================================================
  // MAIN UI RENDER - The actual swap interface

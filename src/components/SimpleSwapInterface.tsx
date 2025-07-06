@@ -793,10 +793,38 @@ export function SimpleSwapInterface() {
     }
    }
    
-   showNotification('info', 'Please confirm the swap transaction in your wallet...');
+   // Estimate gas to catch errors before sending transaction
+   showNotification('info', 'Estimating gas for transaction...');
    
    // Use Privy's wallet interface
    const provider = await wallet.getEthereumProvider();
+   
+   try {
+    // Try to estimate gas first to catch revert errors
+    await provider.request({
+     method: 'eth_estimateGas',
+     params: [{
+      to: txRequest.to,
+      data: txRequest.data,
+      value: txRequest.value || '0x0',
+      from: wallet.address
+     }]
+    });
+   } catch (gasError: any) {
+    console.error('Gas estimation failed:', gasError);
+    
+    // Parse common revert reasons
+    if (gasError.message?.includes('8199f5f3')) {
+     throw new Error('Insufficient token balance or allowance. Please check your balance and try again.');
+    } else if (gasError.message?.includes('execution reverted')) {
+     throw new Error('Transaction would fail. This could be due to insufficient balance, expired quote, or high slippage. Try refreshing the quote or increasing slippage tolerance.');
+    } else {
+     throw new Error(`Transaction validation failed: ${gasError.message || 'Unknown error'}`);
+    }
+   }
+   
+   showNotification('info', 'Please confirm the swap transaction in your wallet...');
+   
    const txResponse = await provider.request({
     method: 'eth_sendTransaction',
     params: [{

@@ -33,14 +33,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
         embeddedWallets: {
           createOnLogin: 'users-without-wallets',
         },
-        externalWallets: {
-          metamask: {},
-          walletConnect: { enabled: true },
-          coinbaseWallet: {},
-          phantom: {},
-          backpack: {},
-          rabby: {},
-        },
         defaultChain: monadTestnet,
         supportedChains: [monadTestnet],
       }}
